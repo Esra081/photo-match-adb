@@ -1,3 +1,9 @@
+"""
+PhotoMatch — Android & Apple iPhone Photo Backup & Match Tool
+Sürüm: 2.0 Pro
+Desteklenen Diller: Türkçe (TR), English (EN), Deutsch (DE), Español (ES)
+"""
+
 import sys
 import os
 import re
@@ -6,6 +12,7 @@ import subprocess
 import tempfile
 import threading
 import calendar
+import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -22,14 +29,11 @@ except Exception:
     pass
 
 import ios_manager
-
+import i18n
+from i18n import t
 
 # ============================================================
-#  PhotoMatch - Android & Apple iPhone Photo Backup
-#  Gerekenler:
-#    pip install customtkinter pillow pywin32 pillow-heif
-#  ADB:
-#    Put adb_tools/adb.exe next to this file or add adb to PATH.
+#  Yollar & Ortam Ayarları
 # ============================================================
 
 if getattr(sys, "frozen", False):
@@ -52,60 +56,37 @@ IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif", ".gif", ".bmp"
 VIDEO_EXTS = (".mp4", ".mov", ".mkv", ".3gp", ".3gpp", ".avi", ".m4v", ".webm", ".mts", ".m2ts", ".ts")
 MEDIA_EXTS = IMAGE_EXTS + VIDEO_EXTS
 
-MAX_THUMBNAILS_PER_BATCH = 120
+MAX_THUMBNAILS_PER_BATCH = 80
 THUMB_SIZE = (118, 118)
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("dark-blue")
 
-BG = "#0B0F16"
-PANEL = "#141922"
-PANEL_2 = "#1D2430"
-PANEL_3 = "#222A37"
-BORDER = "#303846"
-TEXT = "#F4F7FB"
-MUTED = "#9AA6B2"
-ACCENT = "#FF4D9D"
-ACCENT_2 = "#D93682"
-DANGER = "#F04444"
-OK = "#22C55E"
+# ============================================================
+#  Renk Paleti (Görsel Tasarıma Uygun)
+# ============================================================
 
-FONT_TITLE = ("Segoe UI", 18, "bold")
-FONT_SUB = ("Segoe UI", 13, "bold")
+BG_DARK = "#0B0F19"          # Ana arka plan
+SIDEBAR_BG = "#101522"       # Sol menü arka planı
+SIDEBAR_BORDER = "#1B2335"   # Menü kenarlığı
+CARD_BG = "#141A28"          # Kart arka planı
+CARD_BG_2 = "#1B2334"        # İkincil kart / kutu
+CARD_BORDER = "#253147"      # Kart kenarlığı
+TEXT_WHITE = "#F8FAFC"       # Ana beyaz metin
+TEXT_MUTED = "#8E9CAE"       # Gri soluk metin
+ACCENT_PINK = "#FF2A7A"      # Neon pembe / ana vurgu
+ACCENT_PINK_HOVER = "#E01E68"# Pembe hover
+OK_GREEN = "#10B981"         # Yeşil (cihaz hazır, yeni)
+INFO_BLUE = "#38BDF8"        # Açık mavi (diskte var)
+PURPLE_DUP = "#A855F7"       # Mor (tekrarlar)
+DANGER_RED = "#EF4444"       # Kırmızı (silme, durdur)
+WARN_YELLOW = "#F59E0B"      # Sarı/turuncu (uyarı)
+
+FONT_HEAD = ("Segoe UI", 20, "bold")
+FONT_TITLE = ("Segoe UI", 16, "bold")
+FONT_SUB = ("Segoe UI", 12, "bold")
 FONT_TEXT = ("Segoe UI", 12)
 FONT_SMALL = ("Segoe UI", 10)
-
-
-def button_style(kind: str = "secondary") -> dict:
-    base = {
-        "corner_radius": 8,
-        "font": FONT_SUB,
-        "text_color": TEXT,
-    }
-    if kind == "primary":
-        return {
-            **base,
-            "fg_color": BG,
-            "hover_color": PANEL_2,
-            "border_width": 2,
-            "border_color": ACCENT,
-        }
-    if kind == "danger":
-        return {
-            **base,
-            "fg_color": BG,
-            "hover_color": PANEL_2,
-            "border_width": 2,
-            "border_color": DANGER,
-            "text_color": "#FFD6D6",
-        }
-    return {
-        **base,
-        "fg_color": PANEL_2,
-        "hover_color": PANEL_3,
-        "border_width": 1,
-        "border_color": BORDER,
-    }
 
 
 @dataclass
@@ -125,8 +106,7 @@ MAX_BACKUP_WORKERS = 4
 
 
 def sanitize_windows_name(name: str) -> str:
-    cleaned = re.sub(r'[<>:"/\\|?*]', '_', name)
-    cleaned = cleaned.rstrip(' .')
+    cleaned = re.sub(r'[<>:"/\\|?*]', '_', name).rstrip(' .')
     stem = cleaned.split('.')[0].upper()
     reserved = {"CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"}
     if stem in reserved:
@@ -153,23 +133,41 @@ def creation_flags():
 
 
 def shell_quote(path: str) -> str:
-    # Safely pass paths with spaces or parentheses to adb shell.
     return "'" + path.replace("'", "'\"'\"'") + "'"
 
 
-class PhoneBackupPro(ctk.CTk):
+def format_size(bytes_val: int | None) -> str:
+    if bytes_val is None:
+        return "Bilinmiyor"
+    if bytes_val < 1024:
+        return f"{bytes_val} B"
+    if bytes_val < 1024 * 1024:
+        return f"{bytes_val / 1024:.1f} KB"
+    if bytes_val < 1024 * 1024 * 1024:
+        return f"{bytes_val / (1024 * 1024):.1f} MB"
+    return f"{bytes_val / (1024 * 1024 * 1024):.2f} GB"
+
+
+# ============================================================
+#  Ana Uygulama Sınıfı
+# ============================================================
+
+class PhotoMatchApp(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        self.title("PhotoMatch | Android & iPhone -> Disk Backup")
-        self.geometry("1220x760")
-        self.minsize(1100, 700)
-        self.configure(fg_color=BG)
+        self.title(t("app_title"))
+        self.geometry("1300x820")
+        self.minsize(1180, 720)
+        self.configure(fg_color=BG_DARK)
 
-        self.device_mode_var = ctk.StringVar(value="📱 Android (ADB)")
+        # Durum Değişkenleri
+        self.current_step = 1
+        self.device_mode = ctk.StringVar(value="Android")  # "Android" veya "iPhone"
         self.source_path = ctk.StringVar(value="/sdcard")
         self.target_path = ctk.StringVar(value="")
         self.search_text = ctk.StringVar(value="")
+
         today = datetime.now()
         self.cleanup_year = ctk.StringVar(value=str(today.year))
         self.cleanup_month = ctk.StringVar(value=f"{today.month:02d}")
@@ -179,8 +177,10 @@ class PhoneBackupPro(ctk.CTk):
         self.filtered_items: list[MediaItem] = []
         self.sync_plan: dict[str, list[MediaItem]] = {}
         self.folder_vars: dict[str, ctk.BooleanVar] = {}
+        self.item_select_vars: dict[str, ctk.BooleanVar] = {}
         self.phone_cleanup_candidates: list[MediaItem] = []
-        self.disk_index_cache: dict[str, set[str]] | None = None
+
+        self.disk_index_cache: dict[str, any] | None = None
         self.disk_index_target = ""
 
         self.thumb_refs: dict[str, ImageTk.PhotoImage] = {}
@@ -188,373 +188,970 @@ class PhoneBackupPro(ctk.CTk):
         self.temp_dir = Path(tempfile.mkdtemp(prefix="photomatch_preview_"))
 
         self.is_busy = False
-        self.active_operation = ""
-        self.active_operation_is_risky = False
         self.stop_requested = False
+        self.pause_requested = False
         self.gallery_offset = 0
-        self.preview_photo_ref = None
+        self.connected_device_info = ""
 
-        self.build_ui()
+        # UI Kurulumu
+        self.build_shell_layout()
+        self.show_step(1)
+        self.detect_device_initial()
+
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
-    # ---------------- UI ----------------
+    # ---------------- Dış Kabuk Arayüzü ----------------
 
-    def build_ui(self):
-        header = ctk.CTkFrame(self, fg_color=BG)
-        header.pack(fill="x", padx=18, pady=(14, 8))
+    def build_shell_layout(self):
+        self.grid_rowconfigure(0, weight=1)
+        self.grid_columnconfigure(0, weight=0)  # Sidebar
+        self.grid_columnconfigure(1, weight=1)  # Main View
 
-        ctk.CTkLabel(
-            header,
-            text="PhotoMatch Backup",
-            font=("Segoe UI", 26, "bold"),
-            text_color=TEXT,
-        ).pack(side="left")
+        # Sol Kenar Çubuğu (Sidebar)
+        self.sidebar = ctk.CTkFrame(self, width=250, fg_color=SIDEBAR_BG, corner_radius=0)
+        self.sidebar.grid(row=0, column=0, sticky="nsew")
+        self.sidebar.grid_propagate(False)
 
-        self.device_segmented = ctk.CTkSegmentedButton(
-            header,
-            values=["📱 Android (ADB)", "🍏 Apple iPhone (iOS)"],
-            variable=self.device_mode_var,
-            command=self.on_device_mode_changed,
-            selected_color=ACCENT,
-            selected_hover_color=ACCENT_2,
-            unselected_color=PANEL_2,
-            unselected_hover_color=PANEL_3,
-            font=FONT_SUB,
-            height=34,
+        # Logo & Başlık
+        logo_frame = ctk.CTkFrame(self.sidebar, fg_color="transparent")
+        logo_frame.pack(fill="x", padx=18, pady=(20, 24))
+
+        logo_badge = ctk.CTkLabel(
+            logo_frame,
+            text="📷",
+            font=("Segoe UI", 24),
+            width=48,
+            height=48,
+            fg_color=ACCENT_PINK,
+            corner_radius=12,
         )
-        self.device_segmented.pack(side="left", padx=25)
+        logo_badge.pack(side="left", padx=(0, 12))
 
-        self.status_badge = ctk.CTkLabel(
-            header,
-            text="Ready",
-            font=FONT_SUB,
-            text_color=TEXT,
-            fg_color=PANEL_2,
-            corner_radius=8,
-            padx=14,
-            pady=8,
-        )
-        self.status_badge.pack(side="right")
+        title_box = ctk.CTkFrame(logo_frame, fg_color="transparent")
+        title_box.pack(side="left", fill="both")
+        self.logo_title = ctk.CTkLabel(title_box, text="PhotoMatch", font=FONT_HEAD, text_color=TEXT_WHITE)
+        self.logo_title.pack(anchor="w")
+        self.logo_sub = ctk.CTkLabel(title_box, text=t("app_subtitle"), font=FONT_SMALL, text_color=TEXT_MUTED)
+        self.logo_sub.pack(anchor="w")
 
-        self.tabs = ctk.CTkTabview(
-            self,
-            fg_color=PANEL,
-            segmented_button_selected_color=ACCENT,
-            segmented_button_selected_hover_color=ACCENT_2,
-            segmented_button_unselected_color=PANEL_2,
-            segmented_button_unselected_hover_color=PANEL_3,
-        )
-        self.tabs.pack(fill="both", expand=True, padx=18, pady=(0, 18))
+        # Dikey Adım Gezgini (Stepper)
+        self.stepper_frame = ctk.CTkFrame(self.sidebar, fg_color="transparent")
+        self.stepper_frame.pack(fill="x", padx=12, pady=10)
 
-        self.tab_analyze = self.tabs.add("1  Scan & Gallery")
-        self.tab_backup = self.tabs.add("2  Backup")
-        self.tab_clean = self.tabs.add("3  Duplicate Cleanup")
-        self.tab_phone_clean = self.tabs.add("4  Phone Cleanup")
+        self.step_buttons = []
+        steps_data = [
+            (1, "step_1_title", "step_1_sub"),
+            (2, "step_2_title", "step_2_sub"),
+            (3, "step_3_title", "step_3_sub"),
+            (4, "step_4_title", "step_4_sub"),
+        ]
 
-        self.build_analyze_tab()
-        self.build_backup_tab()
-        self.build_clean_tab()
-        self.build_phone_cleanup_tab()
+        for step_num, title_key, sub_key in steps_data:
+            btn_frame = ctk.CTkFrame(self.stepper_frame, fg_color="transparent", corner_radius=10, height=60, cursor="hand2")
+            btn_frame.pack(fill="x", pady=5)
+            btn_frame.pack_propagate(False)
 
-    def build_analyze_tab(self):
-        top = ctk.CTkFrame(self.tab_analyze, fg_color=PANEL)
-        top.pack(fill="x", padx=12, pady=10)
+            num_badge = ctk.CTkLabel(
+                btn_frame,
+                text=str(step_num),
+                width=32,
+                height=32,
+                font=FONT_SUB,
+                corner_radius=16,
+                fg_color=CARD_BG_2,
+                text_color=TEXT_MUTED,
+            )
+            num_badge.pack(side="left", padx=(10, 10))
 
-        ctk.CTkLabel(top, text="Phone folder", font=FONT_SUB, text_color=ACCENT).grid(row=0, column=0, sticky="w", padx=8, pady=(8, 4))
-        self.entry_source = ctk.CTkEntry(top, textvariable=self.source_path, width=360, fg_color=BG, text_color=TEXT)
-        self.entry_source.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 8))
+            text_box = ctk.CTkFrame(btn_frame, fg_color="transparent")
+            text_box.pack(side="left", fill="both", expand=True)
 
-        ctk.CTkLabel(top, text="Backup folder on disk", font=FONT_SUB, text_color=ACCENT).grid(row=0, column=1, sticky="w", padx=8, pady=(8, 4))
-        self.entry_target = ctk.CTkEntry(top, textvariable=self.target_path, width=420, fg_color=BG, text_color=TEXT)
-        self.entry_target.grid(row=1, column=1, sticky="ew", padx=8, pady=(0, 8))
+            lbl_title = ctk.CTkLabel(text_box, text=t(title_key), font=FONT_SUB, text_color=TEXT_WHITE, anchor="w")
+            lbl_title.pack(anchor="w", pady=(8, 0))
 
-        ctk.CTkButton(top, text="Choose Disk", width=110, command=self.select_target, **button_style("secondary")).grid(row=1, column=2, padx=8, pady=(0, 8))
-        ctk.CTkButton(top, text="Test Device", width=110, command=self.test_device, **button_style("secondary")).grid(row=1, column=3, padx=8, pady=(0, 8))
-        self.btn_scan = ctk.CTkButton(top, text="Scan & Show Gallery", width=210, command=self.trigger_scan, **button_style("primary"))
-        self.btn_scan.grid(row=1, column=4, padx=8, pady=(0, 8))
+            lbl_sub = ctk.CTkLabel(text_box, text=t(sub_key), font=FONT_SMALL, text_color=TEXT_MUTED, anchor="w")
+            lbl_sub.pack(anchor="w")
 
-        top.grid_columnconfigure(1, weight=1)
+            # Click bind
+            for w in (btn_frame, num_badge, text_box, lbl_title, lbl_sub):
+                w.bind("<Button-1>", lambda _e, s=step_num: self.show_step(s))
 
-        body = ctk.CTkFrame(self.tab_analyze, fg_color=PANEL)
-        body.pack(fill="both", expand=True, padx=12, pady=(0, 12))
-        body.grid_columnconfigure(0, weight=0)
-        body.grid_columnconfigure(1, weight=1)
-        body.grid_rowconfigure(1, weight=1)
+            self.step_buttons.append({
+                "num": step_num,
+                "frame": btn_frame,
+                "badge": num_badge,
+                "title": lbl_title,
+                "sub": lbl_sub,
+                "title_key": title_key,
+                "sub_key": sub_key,
+            })
 
-        left_header = ctk.CTkFrame(body, fg_color=PANEL)
-        left_header.grid(row=0, column=0, sticky="ew", padx=(8, 6), pady=(8, 4))
-        ctk.CTkLabel(left_header, text="Folders to Back Up", font=FONT_TITLE, text_color=TEXT).pack(anchor="w")
+        # Alt Bilgi / Hakkında
+        self.sidebar_bottom = ctk.CTkFrame(self.sidebar, fg_color="transparent")
+        self.sidebar_bottom.pack(side="bottom", fill="x", padx=14, pady=16)
 
-        self.folder_scroll = ctk.CTkScrollableFrame(body, width=340, fg_color=BG, corner_radius=8)
-        self.folder_scroll.grid(row=1, column=0, sticky="nsw", padx=(8, 6), pady=(0, 8))
-
-        right_header = ctk.CTkFrame(body, fg_color=PANEL)
-        right_header.grid(row=0, column=1, sticky="ew", padx=(6, 8), pady=(8, 4))
-        right_header.grid_columnconfigure(1, weight=1)
-
-        ctk.CTkLabel(right_header, text="Phone Gallery Preview", font=FONT_TITLE, text_color=TEXT).grid(row=0, column=0, sticky="w")
-        self.entry_search = ctk.CTkEntry(right_header, textvariable=self.search_text, placeholder_text="Search: DCIM, WhatsApp, IMG_...", width=260, fg_color=BG)
-        self.entry_search.grid(row=0, column=1, sticky="e", padx=8)
-        self.entry_search.bind("<KeyRelease>", lambda _e: self.apply_filter())
-        ctk.CTkButton(right_header, text="Filter", width=80, command=self.apply_filter, **button_style("secondary")).grid(row=0, column=2, sticky="e")
-
-        self.summary_label = ctk.CTkLabel(
-            right_header,
-            text="After scanning, photos and videos from your phone appear here.",
+        self.btn_about = ctk.CTkButton(
+            self.sidebar_bottom,
+            text=f"ⓘ  {t('about')}",
             font=FONT_TEXT,
-            text_color=MUTED,
+            fg_color=CARD_BG_2,
+            hover_color=CARD_BORDER,
+            text_color=TEXT_MUTED,
+            border_width=1,
+            border_color=CARD_BORDER,
+            height=36,
+            command=self.show_about_dialog,
         )
-        self.summary_label.grid(row=1, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        self.btn_about.pack(fill="x")
 
-        self.scan_progress = ctk.CTkProgressBar(right_header, height=10, fg_color=BG, progress_color=ACCENT)
-        self.scan_progress.set(0)
-        self.scan_progress.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(8, 0))
+        # Sağ Ana Kapsayıcı
+        self.main_container = ctk.CTkFrame(self, fg_color=BG_DARK, corner_radius=0)
+        self.main_container.grid(row=0, column=1, sticky="nsew", padx=16, pady=14)
+        self.main_container.grid_rowconfigure(1, weight=1)
+        self.main_container.grid_columnconfigure(0, weight=1)
 
-        self.stats_frame = ctk.CTkFrame(right_header, fg_color=PANEL)
-        self.stats_frame.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(10, 0))
+        # Üst Navigasyon Çubuğu (Top Bar)
+        self.build_top_bar()
+
+        # 4 Farklı Adım Panelleri
+        self.step_views = {}
+        self.step_views[1] = self.build_step1_view()
+        self.step_views[2] = self.build_step2_view()
+        self.step_views[3] = self.build_step3_view()
+        self.step_views[4] = self.build_step4_view()
+
+    def build_top_bar(self):
+        top_bar = ctk.CTkFrame(self.main_container, fg_color="transparent", height=46)
+        top_bar.grid(row=0, column=0, sticky="ew", pady=(0, 12))
+
+        # Sol: Cihaz Seçim Butonları (Android / iPhone)
+        self.device_segmented = ctk.CTkSegmentedButton(
+            top_bar,
+            values=[t("device_android"), t("device_ios")],
+            command=self.on_device_toggle,
+            selected_color=ACCENT_PINK,
+            selected_hover_color=ACCENT_PINK_HOVER,
+            unselected_color=CARD_BG,
+            unselected_hover_color=CARD_BG_2,
+            font=FONT_SUB,
+            height=36,
+            corner_radius=8,
+        )
+        self.device_segmented.set(t("device_android"))
+        self.device_segmented.pack(side="left")
+
+        # Sağ: Dil Seçimi ve Ayar İkonu
+        lang_frame = ctk.CTkFrame(top_bar, fg_color="transparent")
+        lang_frame.pack(side="right")
+
+        current_lang = i18n.get_current_lang()
+        lang_options = list(i18n.LANGUAGES.values())
+        cur_lang_text = i18n.LANGUAGES.get(current_lang, lang_options[0])
+
+        self.lang_menu = ctk.CTkOptionMenu(
+            lang_frame,
+            values=lang_options,
+            command=self.on_language_changed,
+            fg_color=CARD_BG,
+            button_color=CARD_BG_2,
+            button_hover_color=CARD_BORDER,
+            text_color=TEXT_WHITE,
+            font=FONT_TEXT,
+            width=130,
+            height=36,
+            corner_radius=8,
+        )
+        self.lang_menu.set(cur_lang_text)
+        self.lang_menu.pack(side="right", padx=(8, 0))
+
+        btn_settings = ctk.CTkButton(
+            lang_frame,
+            text="⚙",
+            font=("Segoe UI", 16),
+            width=36,
+            height=36,
+            fg_color=CARD_BG,
+            hover_color=CARD_BG_2,
+            border_width=1,
+            border_color=CARD_BORDER,
+            corner_radius=8,
+            command=self.show_about_dialog,
+        )
+        btn_settings.pack(side="right")
+
+    # ---------------- Adım Değiştirme (Navigation) ----------------
+
+    def show_step(self, step_num: int):
+        self.current_step = step_num
+        for s in (1, 2, 3, 4):
+            if s == step_num:
+                self.step_views[s].grid(row=1, column=0, sticky="nsew")
+            else:
+                self.step_views[s].grid_forget()
+
+        # Sidebar stilini güncelle
+        for item in self.step_buttons:
+            is_active = (item["num"] == step_num)
+            if is_active:
+                item["frame"].configure(fg_color=ACCENT_PINK)
+                item["badge"].configure(fg_color=TEXT_WHITE, text_color=ACCENT_PINK)
+                item["title"].configure(text_color=TEXT_WHITE)
+                item["sub"].configure(text_color="#FFD1E3")
+            else:
+                item["frame"].configure(fg_color="transparent")
+                item["badge"].configure(fg_color=CARD_BG_2, text_color=TEXT_MUTED)
+                item["title"].configure(text_color=TEXT_WHITE)
+                item["sub"].configure(text_color=TEXT_MUTED)
+
+    def refresh_ui_texts(self):
+        """Dil değiştiğinde tüm arayüz metinlerini günceller."""
+        self.title(t("app_title"))
+        self.logo_sub.configure(text=t("app_subtitle"))
+        self.btn_about.configure(text=f"ⓘ  {t('about')}")
+
+        for item in self.step_buttons:
+            item["title"].configure(text=t(item["title_key"]))
+            item["sub"].configure(text=t(item["sub_key"]))
+
+        self.device_segmented.configure(values=[t("device_android"), t("device_ios")])
+        self.device_segmented.set(t("device_ios") if self.is_ios_mode() else t("device_android"))
+
+        # Adım 1 metinleri
+        self.card_dev_title.configure(text=t("card_device_connected"))
+        self.btn_test_dev.configure(text=f"✔ {t('btn_test_device')}")
+        self.lbl_phone_folder.configure(text=t("card_phone_folder"))
+        self.lbl_phone_folder_sub.configure(text=t("card_phone_folder_sub"))
+        self.lbl_target_folder.configure(text=t("card_target_folder"))
+        self.lbl_target_folder_sub.configure(text=t("card_target_folder_sub"))
+        self.btn_browse_disk.configure(text=t("btn_browse"))
+        self.btn_scan_main.configure(text=t("btn_scan"))
+        self.lbl_folders_hdr.configure(text=t("folders_title"))
+        self.lbl_gallery_hdr.configure(text=t("gallery_title"))
+        self.entry_search.configure(placeholder_text=t("gallery_search_placeholder"))
+        self.btn_filter.configure(text=t("btn_filter"))
+        self.btn_load_more.configure(text=t("btn_load_more"))
+        self.btn_go_backup.configure(text=t("btn_go_backup"))
+        self.lbl_summary_hdr.configure(text=t("summary_title"))
+
+        self.tile_total_lbl.configure(text=t("stat_total_media"))
+        self.tile_new_lbl.configure(text=t("stat_new_photos"))
+        self.tile_ondisk_lbl.configure(text=t("stat_on_disk"))
+        self.tile_dup_lbl.configure(text=t("stat_duplicates"))
+
+        # Adım 2 metinleri
+        self.step2_title.configure(text=t("backup_running_title"))
+        self.step2_sub.configure(text=t("backup_running_sub"))
+        self.src_card_lbl.configure(text=t("backup_source"))
+        self.dst_card_lbl.configure(text=t("backup_target"))
+        self.btn_open_disk.configure(text=t("btn_open_folder"))
+        self.btn_pause.configure(text=f"⏸ {t('btn_pause')}")
+        self.btn_stop.configure(text=f"⛔ {t('btn_stop')}")
+
+        # Adım 3 metinleri
+        self.dup_hdr.configure(text=t("dup_title"))
+        self.dup_sub_lbl.configure(text=t("dup_sub"))
+        self.tile_dup_cnt_lbl.configure(text=t("dup_card_count"))
+        self.tile_dup_spc_lbl.configure(text=t("dup_card_space"))
+        self.tile_dup_unq_lbl.configure(text=t("dup_card_unique"))
+        self.tile_dup_tot_lbl.configure(text=t("dup_card_total"))
+        self.btn_del_dup.configure(text=f"🗑 {t('btn_delete_duplicates')}")
+        self.btn_rescan_dup.configure(text=f"🔄 {t('btn_rescan_duplicates')}")
+
+        # Adım 4 metinleri
+        self.pclean_hdr.configure(text=t("phone_clean_title"))
+        self.pclean_sub.configure(text=t("phone_clean_sub"))
+        self.clean_date_lbl.configure(text=t("clean_date_title"))
+        self.clean_date_sub.configure(text=t("clean_date_sub"))
+        self.lbl_warn_hdr.configure(text=t("warning_title"))
+        self.lbl_warn_1.configure(text=t("warning_bullet_1"))
+        self.lbl_warn_2.configure(text=t("warning_bullet_2"))
+        self.lbl_warn_3.configure(text=t("warning_bullet_3"))
+        self.btn_find_clean.configure(text=t("btn_find_phone_cleanup"))
+        self.btn_start_clean.configure(text=f"🗑 {t('btn_start_phone_clean')}")
+
+    def on_language_changed(self, chosen_label: str):
+        for code, label in i18n.LANGUAGES.items():
+            if label == chosen_label:
+                i18n.save_lang(code)
+                break
+        self.refresh_ui_texts()
+
+    def is_ios_mode(self) -> bool:
+        val = self.device_segmented.get()
+        return "iphone" in val.lower() or "ios" in val.lower()
+
+    def on_device_toggle(self, mode: str):
+        if self.is_ios_mode():
+            self.device_mode.set("iPhone")
+            devices = ios_manager.list_ios_devices()
+            if devices:
+                self.source_path.set(f"{devices[0]}/DCIM")
+                self.set_device_connected_ui(True, devices[0])
+            else:
+                self.source_path.set("Apple iPhone / DCIM")
+                self.set_device_connected_ui(False, "Apple iPhone")
+        else:
+            self.device_mode.set("Android")
+            self.source_path.set("/sdcard")
+            self.detect_android_device()
+
+        self.clear_analysis_ui()
+
+    def set_device_connected_ui(self, connected: bool, name: str):
+        if connected:
+            self.lbl_dev_name.configure(text=f"● {name}", text_color=OK_GREEN)
+            self.connected_device_info = name
+        else:
+            self.lbl_dev_name.configure(text=f"○ {t('card_device_none')}", text_color=TEXT_MUTED)
+            self.connected_device_info = ""
+
+    def detect_device_initial(self):
+        threading.Thread(target=self._detect_worker, daemon=True).start()
+
+    def _detect_worker(self):
+        time.sleep(0.5)
+        if self.is_ios_mode():
+            devs = ios_manager.list_ios_devices()
+            if devs:
+                self.after(0, lambda: self.set_device_connected_ui(True, devs[0]))
+            else:
+                self.after(0, lambda: self.set_device_connected_ui(False, "Apple iPhone"))
+        else:
+            self.detect_android_device()
+
+    def detect_android_device(self):
+        try:
+            res = self.run_adb(["devices"], timeout=6)
+            lines = [x.strip() for x in res.stdout.splitlines() if x.strip()]
+            devices = [x.split("\t")[0] for x in lines[1:] if "\tdevice" in x]
+            if devices:
+                dev_id = devices[0]
+                model_res = self.run_adb(["-s", dev_id, "shell", "getprop", "ro.product.model"], timeout=5)
+                model_name = model_res.stdout.strip() if model_res.returncode == 0 and model_res.stdout.strip() else dev_id
+                self.after(0, lambda: self.set_device_connected_ui(True, f"{model_name} ({dev_id})"))
+            else:
+                self.after(0, lambda: self.set_device_connected_ui(False, "Android"))
+        except Exception:
+            self.after(0, lambda: self.set_device_connected_ui(False, "Android"))
+
+    # ============================================================
+    #  ADIM 1: Fotoğrafları Tara (Scan & Gallery)
+    # ============================================================
+
+    def build_step1_view(self) -> ctk.CTkFrame:
+        view = ctk.CTkFrame(self.main_container, fg_color="transparent")
+        view.grid_rowconfigure(1, weight=1)
+        view.grid_columnconfigure(0, weight=1)
+
+        # Üst 3 Kart (Cihaz, Telefon Klasörü, Hedef Klasör)
+        top_cards = ctk.CTkFrame(view, fg_color="transparent")
+        top_cards.grid(row=0, column=0, sticky="ew", pady=(0, 12))
         for i in range(3):
-            self.stats_frame.grid_columnconfigure(i, weight=1)
-        self.new_count_label = self.create_stat_tile(self.stats_frame, "New", "0", OK, 0)
-        self.existing_count_label = self.create_stat_tile(self.stats_frame, "Already on Disk", "0", MUTED, 1)
-        self.total_count_label = self.create_stat_tile(self.stats_frame, "Total Media", "0", ACCENT, 2)
+            top_cards.grid_columnconfigure(i, weight=1)
 
-        self.gallery_scroll = ctk.CTkScrollableFrame(body, fg_color=BG, corner_radius=8)
-        self.gallery_scroll.grid(row=1, column=1, sticky="nsew", padx=(6, 8), pady=(0, 8))
+        # Kart 1: Cihaz Durumu
+        card_dev = ctk.CTkFrame(top_cards, fg_color=CARD_BG, corner_radius=10, border_width=1, border_color=CARD_BORDER, height=96)
+        card_dev.grid(row=0, column=0, sticky="ew", padx=(0, 8))
+        card_dev.pack_propagate(False)
 
-        self.preview_panel = ctk.CTkFrame(body, fg_color=BG, corner_radius=8, height=120)
-        self.preview_panel.grid(row=2, column=1, sticky="ew", padx=(6, 8), pady=(0, 8))
-        self.preview_panel.grid_propagate(False)
-        self.preview_panel.grid_columnconfigure(1, weight=1)
-        self.preview_image_label = ctk.CTkLabel(self.preview_panel, text="Select a photo name to preview it here.", font=FONT_TEXT, text_color=MUTED, width=136, height=96, fg_color=PANEL_2, corner_radius=8)
-        self.preview_image_label.grid(row=0, column=0, padx=10, pady=10)
-        self.preview_meta_label = ctk.CTkLabel(self.preview_panel, text="No file selected", font=FONT_SUB, text_color=TEXT, anchor="w", justify="left")
-        self.preview_meta_label.grid(row=0, column=1, sticky="ew", padx=(0, 10), pady=10)
+        dev_icon_box = ctk.CTkLabel(card_dev, text="📱", font=("Segoe UI", 20), width=42, height=42, fg_color=CARD_BG_2, corner_radius=8)
+        dev_icon_box.pack(side="left", padx=12, pady=10)
 
-        self.gallery_actions = ctk.CTkFrame(body, fg_color=PANEL)
-        self.gallery_actions.grid(row=3, column=1, sticky="ew", padx=(6, 8), pady=(0, 8))
+        dev_info_box = ctk.CTkFrame(card_dev, fg_color="transparent")
+        dev_info_box.pack(side="left", fill="both", expand=True, pady=8)
 
-        self.btn_load_more = ctk.CTkButton(self.gallery_actions, text="Load More Previews", command=self.load_more_gallery, state="disabled", **button_style("secondary"))
-        self.btn_load_more.pack(side="left")
+        self.card_dev_title = ctk.CTkLabel(dev_info_box, text=t("card_device_connected"), font=FONT_SUB, text_color=TEXT_WHITE)
+        self.card_dev_title.pack(anchor="w")
 
-        self.btn_go_backup = ctk.CTkButton(self.gallery_actions, text="Back Up Selected Folders", command=self.go_backup, state="disabled", **button_style("primary"))
+        self.lbl_dev_name = ctk.CTkLabel(dev_info_box, text=f"○ {t('card_device_none')}", font=FONT_TEXT, text_color=TEXT_MUTED)
+        self.lbl_dev_name.pack(anchor="w")
+
+        self.btn_test_dev = ctk.CTkButton(
+            card_dev,
+            text=f"✔ {t('btn_test_device')}",
+            font=FONT_SMALL,
+            width=100,
+            height=28,
+            fg_color=CARD_BG_2,
+            hover_color=CARD_BORDER,
+            border_width=1,
+            border_color=CARD_BORDER,
+            command=self.test_device_action,
+        )
+        self.btn_test_dev.pack(side="right", padx=12)
+
+        # Kart 2: Telefon Klasörü
+        card_src = ctk.CTkFrame(top_cards, fg_color=CARD_BG, corner_radius=10, border_width=1, border_color=CARD_BORDER, height=96)
+        card_src.grid(row=0, column=1, sticky="ew", padx=4)
+        card_src.pack_propagate(False)
+
+        src_icon_box = ctk.CTkLabel(card_src, text="📁", font=("Segoe UI", 20), width=42, height=42, fg_color=CARD_BG_2, corner_radius=8)
+        src_icon_box.pack(side="left", padx=12, pady=10)
+
+        src_info_box = ctk.CTkFrame(card_src, fg_color="transparent")
+        src_info_box.pack(side="left", fill="both", expand=True, padx=(0, 10), pady=8)
+
+        self.lbl_phone_folder = ctk.CTkLabel(src_info_box, text=t("card_phone_folder"), font=FONT_SUB, text_color=TEXT_WHITE)
+        self.lbl_phone_folder.pack(anchor="w")
+
+        self.lbl_phone_folder_sub = ctk.CTkLabel(src_info_box, text=t("card_phone_folder_sub"), font=FONT_SMALL, text_color=TEXT_MUTED)
+        self.lbl_phone_folder_sub.pack(anchor="w")
+
+        self.entry_source = ctk.CTkEntry(src_info_box, textvariable=self.source_path, height=26, fg_color=BG_DARK, border_width=1, border_color=CARD_BORDER, text_color=TEXT_WHITE, font=FONT_SMALL)
+        self.entry_source.pack(fill="x", pady=(4, 0))
+
+        # Kart 3: Yedekleme Klasörü
+        card_dst = ctk.CTkFrame(top_cards, fg_color=CARD_BG, corner_radius=10, border_width=1, border_color=CARD_BORDER, height=96)
+        card_dst.grid(row=0, column=2, sticky="ew", padx=(8, 0))
+        card_dst.pack_propagate(False)
+
+        dst_icon_box = ctk.CTkLabel(card_dst, text="💾", font=("Segoe UI", 20), width=42, height=42, fg_color=CARD_BG_2, corner_radius=8)
+        dst_icon_box.pack(side="left", padx=12, pady=10)
+
+        dst_info_box = ctk.CTkFrame(card_dst, fg_color="transparent")
+        dst_info_box.pack(side="left", fill="both", expand=True, padx=(0, 8), pady=8)
+
+        self.lbl_target_folder = ctk.CTkLabel(dst_info_box, text=t("card_target_folder"), font=FONT_SUB, text_color=TEXT_WHITE)
+        self.lbl_target_folder.pack(anchor="w")
+
+        self.lbl_target_folder_sub = ctk.CTkLabel(dst_info_box, text=t("card_target_folder_sub"), font=FONT_SMALL, text_color=TEXT_MUTED)
+        self.lbl_target_folder_sub.pack(anchor="w")
+
+        self.entry_target = ctk.CTkEntry(dst_info_box, textvariable=self.target_path, height=26, fg_color=BG_DARK, border_width=1, border_color=CARD_BORDER, text_color=TEXT_WHITE, font=FONT_SMALL)
+        self.entry_target.pack(fill="x", pady=(4, 0))
+
+        self.btn_browse_disk = ctk.CTkButton(
+            card_dst,
+            text=t("btn_browse"),
+            font=FONT_SMALL,
+            width=68,
+            height=28,
+            fg_color=CARD_BG_2,
+            hover_color=CARD_BORDER,
+            border_width=1,
+            border_color=CARD_BORDER,
+            command=self.select_target_disk,
+        )
+        self.btn_browse_disk.pack(side="right", padx=10)
+
+        # Ana Gövde (3 Sütun: Klasörler | Galeri | Özet)
+        body = ctk.CTkFrame(view, fg_color="transparent")
+        body.grid(row=1, column=0, sticky="nsew")
+        body.grid_rowconfigure(0, weight=1)
+        body.grid_columnconfigure(0, weight=0)  # Klasörler ~210px
+        body.grid_columnconfigure(1, weight=1)  # Galeri
+        body.grid_columnconfigure(2, weight=0)  # Özet ~230px
+
+        # Sütun 1: Klasörler
+        col_folders = ctk.CTkFrame(body, width=220, fg_color=CARD_BG, corner_radius=10, border_width=1, border_color=CARD_BORDER)
+        col_folders.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+        col_folders.grid_propagate(False)
+
+        folder_hdr = ctk.CTkFrame(col_folders, fg_color="transparent")
+        folder_hdr.pack(fill="x", padx=12, pady=(12, 8))
+        self.lbl_folders_hdr = ctk.CTkLabel(folder_hdr, text=t("folders_title"), font=FONT_TITLE, text_color=TEXT_WHITE)
+        self.lbl_folders_hdr.pack(side="left")
+
+        self.folder_scroll = ctk.CTkScrollableFrame(col_folders, fg_color="transparent")
+        self.folder_scroll.pack(fill="both", expand=True, padx=6, pady=(0, 8))
+
+        # Sütun 2: Galeri Önizleme
+        col_gallery = ctk.CTkFrame(body, fg_color=CARD_BG, corner_radius=10, border_width=1, border_color=CARD_BORDER)
+        col_gallery.grid(row=0, column=1, sticky="nsew", padx=4)
+        col_gallery.grid_rowconfigure(1, weight=1)
+        col_gallery.grid_columnconfigure(0, weight=1)
+
+        gallery_top = ctk.CTkFrame(col_gallery, fg_color="transparent")
+        gallery_top.grid(row=0, column=0, sticky="ew", padx=14, pady=12)
+
+        icon_cam = ctk.CTkLabel(gallery_top, text="🖼️", font=("Segoe UI", 16))
+        icon_cam.pack(side="left", padx=(0, 8))
+
+        gal_info = ctk.CTkFrame(gallery_top, fg_color="transparent")
+        gal_info.pack(side="left")
+        self.lbl_gallery_hdr = ctk.CTkLabel(gal_info, text=t("gallery_title"), font=FONT_TITLE, text_color=TEXT_WHITE)
+        self.lbl_gallery_hdr.pack(anchor="w")
+        self.lbl_gallery_sub = ctk.CTkLabel(gal_info, text=t("gallery_sub"), font=FONT_SMALL, text_color=TEXT_MUTED)
+        self.lbl_gallery_sub.pack(anchor="w")
+
+        # Filtreleme & Arama Kutusu
+        gal_search_box = ctk.CTkFrame(gallery_top, fg_color="transparent")
+        gal_search_box.pack(side="right")
+
+        self.entry_search = ctk.CTkEntry(
+            gal_search_box,
+            textvariable=self.search_text,
+            placeholder_text=t("gallery_search_placeholder"),
+            font=FONT_TEXT,
+            width=200,
+            height=32,
+            fg_color=BG_DARK,
+            border_width=1,
+            border_color=CARD_BORDER,
+            text_color=TEXT_WHITE,
+        )
+        self.entry_search.pack(side="left", padx=(0, 6))
+        self.entry_search.bind("<KeyRelease>", lambda _e: self.apply_filter())
+
+        self.btn_filter = ctk.CTkButton(
+            gal_search_box,
+            text=t("btn_filter"),
+            font=FONT_SMALL,
+            width=68,
+            height=32,
+            fg_color=CARD_BG_2,
+            hover_color=CARD_BORDER,
+            border_width=1,
+            border_color=CARD_BORDER,
+            command=self.apply_filter,
+        )
+        self.btn_filter.pack(side="left")
+
+        # Fotoğraf Kartları Tablosu
+        self.gallery_scroll = ctk.CTkScrollableFrame(col_gallery, fg_color=BG_DARK, corner_radius=8)
+        self.gallery_scroll.grid(row=1, column=0, sticky="nsew", padx=12, pady=(0, 10))
+
+        # Sütun 3: Tarama Özeti
+        col_summary = ctk.CTkFrame(body, width=230, fg_color=CARD_BG, corner_radius=10, border_width=1, border_color=CARD_BORDER)
+        col_summary.grid(row=0, column=2, sticky="nsew", padx=(8, 0))
+        col_summary.grid_propagate(False)
+
+        summary_hdr = ctk.CTkFrame(col_summary, fg_color="transparent")
+        summary_hdr.pack(fill="x", padx=14, pady=(12, 10))
+        self.lbl_summary_hdr = ctk.CTkLabel(summary_hdr, text=t("summary_title"), font=FONT_TITLE, text_color=TEXT_WHITE)
+        self.lbl_summary_hdr.pack(anchor="w")
+
+        # 4 Özet Kartı
+        self.tile_total_val, self.tile_total_lbl = self.build_stat_tile(col_summary, "📷", ACCENT_PINK, "0", "stat_total_media")
+        self.tile_new_val, self.tile_new_lbl = self.build_stat_tile(col_summary, "✨", OK_GREEN, "0", "stat_new_photos")
+        self.tile_ondisk_val, self.tile_ondisk_lbl = self.build_stat_tile(col_summary, "💾", INFO_BLUE, "0", "stat_on_disk")
+        self.tile_dup_val, self.tile_dup_lbl = self.build_stat_tile(col_summary, "🔄", PURPLE_DUP, "0", "stat_duplicates")
+
+        # Taramayı Başlat Butonu
+        self.btn_scan_main = ctk.CTkButton(
+            col_summary,
+            text=t("btn_scan"),
+            font=FONT_SUB,
+            fg_color=ACCENT_PINK,
+            hover_color=ACCENT_PINK_HOVER,
+            height=40,
+            corner_radius=8,
+            command=self.trigger_scan,
+        )
+        self.btn_scan_main.pack(fill="x", padx=12, pady=(16, 0))
+
+        # Alt İşlem Çubuğu (Footer)
+        bottom_bar = ctk.CTkFrame(view, fg_color="transparent", height=44)
+        bottom_bar.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+
+        self.lbl_footer_status = ctk.CTkLabel(bottom_bar, text="", font=FONT_TEXT, text_color=TEXT_MUTED)
+        self.lbl_footer_status.pack(side="left")
+
+        self.btn_go_backup = ctk.CTkButton(
+            bottom_bar,
+            text=t("btn_go_backup"),
+            font=FONT_SUB,
+            fg_color=ACCENT_PINK,
+            hover_color=ACCENT_PINK_HOVER,
+            height=38,
+            corner_radius=8,
+            command=self.go_to_backup_step,
+        )
         self.btn_go_backup.pack(side="right")
 
-    def create_stat_tile(self, parent, title: str, value: str, color: str, column: int):
-        tile = ctk.CTkFrame(parent, fg_color=BG, corner_radius=8)
-        tile.grid(row=0, column=column, sticky="ew", padx=4)
-        value_label = ctk.CTkLabel(tile, text=value, font=("Segoe UI", 24, "bold"), text_color=color)
-        value_label.pack(anchor="w", padx=12, pady=(8, 0))
-        ctk.CTkLabel(tile, text=title, font=FONT_SMALL, text_color=MUTED).pack(anchor="w", padx=12, pady=(0, 8))
-        return value_label
-
-    def build_backup_tab(self):
-        wrap = ctk.CTkFrame(self.tab_backup, fg_color=PANEL)
-        wrap.pack(fill="both", expand=True, padx=18, pady=18)
-
-        self.backup_info = ctk.CTkLabel(wrap, text="Scan your phone first in Scan & Gallery.", font=FONT_TITLE, text_color=MUTED)
-        self.backup_info.pack(pady=(60, 20))
-
-        self.progress = ctk.CTkProgressBar(wrap, width=760, height=14, fg_color=BG, progress_color=ACCENT)
-        self.progress.set(0)
-        self.progress.pack(pady=20)
-
-        self.backup_status = ctk.CTkLabel(wrap, text="Backup engine is ready.", font=FONT_SUB, text_color=TEXT)
-        self.backup_status.pack(pady=8)
-
-        buttons = ctk.CTkFrame(wrap, fg_color=PANEL)
-        buttons.pack(pady=35)
-
-        self.btn_start_backup = ctk.CTkButton(buttons, text="Start Backup", width=250, height=44, command=self.trigger_backup, state="disabled", **button_style("primary"))
-        self.btn_start_backup.pack(side="left", padx=12)
-
-        self.btn_stop = ctk.CTkButton(buttons, text="Stop Safely", width=250, height=44, command=self.request_stop, state="disabled", **button_style("danger"))
-        self.btn_stop.pack(side="left", padx=12)
-
-    def build_clean_tab(self):
-        wrap = ctk.CTkFrame(self.tab_clean, fg_color=PANEL)
-        wrap.pack(fill="both", expand=True, padx=18, pady=18)
-
-        ctk.CTkLabel(
-            wrap,
-            text="Duplicate cleanup finds files on the target disk with the same relative path and file size.",
-            font=FONT_TITLE,
-            text_color=TEXT,
-        ).pack(pady=(60, 12))
-
-        ctk.CTkLabel(
-            wrap,
-            text="Note: Deleting files is risky. The app asks for confirmation first, then removes duplicates directly.",
-            font=FONT_TEXT,
-            text_color=MUTED,
-        ).pack(pady=(0, 25))
-
-        self.clean_status = ctk.CTkLabel(wrap, text="Cleanup is ready.", font=FONT_SUB, text_color=MUTED)
-        self.clean_status.pack(pady=12)
-
-        self.clean_progress = ctk.CTkProgressBar(wrap, width=760, height=14, fg_color=BG, progress_color=ACCENT)
-        self.clean_progress.set(0)
-        self.clean_progress.pack(pady=18)
-
-        self.btn_clean = ctk.CTkButton(wrap, text="Find & Delete Disk Duplicates", width=300, height=44, command=self.trigger_clean, **button_style("danger"))
-        self.btn_clean.pack(pady=24)
-
-    def build_phone_cleanup_tab(self):
-        wrap = ctk.CTkFrame(self.tab_phone_clean, fg_color=PANEL)
-        wrap.pack(fill="both", expand=True, padx=18, pady=18)
-
-        ctk.CTkLabel(
-            wrap,
-            text="Delete Backed-Up Media From Phone",
-            font=FONT_TITLE,
-            text_color=TEXT,
-        ).pack(anchor="w", padx=10, pady=(10, 6))
-
-        ctk.CTkLabel(
-            wrap,
-            text="Only media that already exists in the selected disk backup will be eligible. Choose a cutoff date; files saved on or before that date can be deleted from the phone.",
-            font=FONT_TEXT,
-            text_color=MUTED,
-            wraplength=980,
-            justify="left",
-        ).pack(anchor="w", padx=10, pady=(0, 16))
-
-        controls = ctk.CTkFrame(wrap, fg_color=PANEL)
-        controls.pack(fill="x", padx=10, pady=(0, 10))
-        controls.grid_columnconfigure(1, weight=1)
-
-        ctk.CTkLabel(controls, text="Cutoff date", font=FONT_SUB, text_color=ACCENT).grid(row=0, column=0, sticky="w", padx=(0, 8))
-        date_picker = ctk.CTkFrame(controls, fg_color=PANEL)
-        date_picker.grid(row=1, column=0, sticky="w", padx=(0, 12), pady=(4, 0))
-
-        current_year = datetime.now().year
-        year_values = [str(year) for year in range(current_year, current_year - 16, -1)]
-        month_values = [f"{month:02d}" for month in range(1, 13)]
-        day_values = [f"{day:02d}" for day in range(1, 32)]
-
-        self.cleanup_year_menu = ctk.CTkOptionMenu(
-            date_picker,
-            values=year_values,
-            variable=self.cleanup_year,
-            width=92,
-            fg_color=BG,
-            button_color=PANEL_2,
-            button_hover_color=ACCENT_2,
-            command=lambda _value: self.update_cleanup_days(),
+        self.btn_load_more = ctk.CTkButton(
+            bottom_bar,
+            text=t("btn_load_more"),
+            font=FONT_SUB,
+            fg_color=CARD_BG,
+            hover_color=CARD_BG_2,
+            border_width=1,
+            border_color=CARD_BORDER,
+            height=38,
+            corner_radius=8,
+            command=self.load_more_gallery,
+            state="disabled",
         )
-        self.cleanup_year_menu.pack(side="left", padx=(0, 6))
+        self.btn_load_more.pack(side="right", padx=(0, 10))
 
-        self.cleanup_month_menu = ctk.CTkOptionMenu(
-            date_picker,
-            values=month_values,
-            variable=self.cleanup_month,
-            width=74,
-            fg_color=BG,
-            button_color=PANEL_2,
-            button_hover_color=ACCENT_2,
-            command=lambda _value: self.update_cleanup_days(),
+        return view
+
+    def build_stat_tile(self, parent, icon: str, color: str, initial_val: str, label_key: str):
+        card = ctk.CTkFrame(parent, fg_color=CARD_BG_2, corner_radius=8, border_width=1, border_color=CARD_BORDER)
+        card.pack(fill="x", padx=12, pady=5)
+
+        icon_lbl = ctk.CTkLabel(card, text=icon, font=("Segoe UI", 16), text_color=color, width=32, height=32, fg_color=BG_DARK, corner_radius=6)
+        icon_lbl.pack(side="left", padx=10, pady=8)
+
+        text_f = ctk.CTkFrame(card, fg_color="transparent")
+        text_f.pack(side="left", fill="both", expand=True, pady=6)
+
+        val_lbl = ctk.CTkLabel(text_f, text=initial_val, font=FONT_TITLE, text_color=TEXT_WHITE)
+        val_lbl.pack(anchor="w")
+
+        desc_lbl = ctk.CTkLabel(text_f, text=t(label_key), font=FONT_SMALL, text_color=TEXT_MUTED)
+        desc_lbl.pack(anchor="w")
+
+        return val_lbl, desc_lbl
+
+    # ============================================================
+    #  ADIM 2: Yedekle (Backup View)
+    # ============================================================
+
+    def build_step2_view(self) -> ctk.CTkFrame:
+        view = ctk.CTkFrame(self.main_container, fg_color="transparent")
+        view.grid_columnconfigure(0, weight=1)
+
+        # Başlık
+        hdr_frame = ctk.CTkFrame(view, fg_color="transparent")
+        hdr_frame.pack(fill="x", pady=(10, 20))
+        self.step2_title = ctk.CTkLabel(hdr_frame, text=t("backup_running_title"), font=FONT_HEAD, text_color=TEXT_WHITE)
+        self.step2_title.pack(anchor="w")
+        self.step2_sub = ctk.CTkLabel(hdr_frame, text=t("backup_running_sub"), font=FONT_TEXT, text_color=TEXT_MUTED)
+        self.step2_sub.pack(anchor="w", pady=(4, 0))
+
+        # Akış Kartı (Kaynak -> Hedef)
+        flow_card = ctk.CTkFrame(view, fg_color=CARD_BG, corner_radius=10, border_width=1, border_color=CARD_BORDER)
+        flow_card.pack(fill="x", pady=(0, 20))
+        flow_card.grid_columnconfigure(0, weight=1)
+        flow_card.grid_columnconfigure(1, weight=0)
+        flow_card.grid_columnconfigure(2, weight=1)
+
+        # Kaynak
+        src_box = ctk.CTkFrame(flow_card, fg_color="transparent")
+        src_box.grid(row=0, column=0, sticky="ew", padx=20, pady=16)
+        ctk.CTkLabel(src_box, text="📱", font=("Segoe UI", 24), width=48, height=48, fg_color=CARD_BG_2, corner_radius=10).pack(side="left", padx=(0, 14))
+        src_t = ctk.CTkFrame(src_box, fg_color="transparent")
+        src_t.pack(side="left", fill="both")
+        self.src_card_lbl = ctk.CTkLabel(src_t, text=t("backup_source"), font=FONT_SMALL, text_color=TEXT_MUTED)
+        self.src_card_lbl.pack(anchor="w")
+        self.src_name_lbl = ctk.CTkLabel(src_t, text="Telefon / DCIM", font=FONT_SUB, text_color=TEXT_WHITE)
+        self.src_name_lbl.pack(anchor="w")
+
+        # Ok İşareti
+        ctk.CTkLabel(flow_card, text="➔", font=("Segoe UI", 24), text_color=ACCENT_PINK).grid(row=0, column=1)
+
+        # Hedef
+        dst_box = ctk.CTkFrame(flow_card, fg_color="transparent")
+        dst_box.grid(row=0, column=2, sticky="ew", padx=20, pady=16)
+        ctk.CTkLabel(dst_box, text="💾", font=("Segoe UI", 24), width=48, height=48, fg_color=CARD_BG_2, corner_radius=10).pack(side="left", padx=(0, 14))
+        dst_t = ctk.CTkFrame(dst_box, fg_color="transparent")
+        dst_t.pack(side="left", fill="both", expand=True)
+        self.dst_card_lbl = ctk.CTkLabel(dst_t, text=t("backup_target"), font=FONT_SMALL, text_color=TEXT_MUTED)
+        self.dst_card_lbl.pack(anchor="w")
+        self.dst_name_lbl = ctk.CTkLabel(dst_t, text="Seçilen Disk Klasörü", font=FONT_SUB, text_color=TEXT_WHITE)
+        self.dst_name_lbl.pack(anchor="w")
+
+        self.btn_open_disk = ctk.CTkButton(
+            dst_box,
+            text=t("btn_open_folder"),
+            font=FONT_SMALL,
+            width=100,
+            height=30,
+            fg_color=CARD_BG_2,
+            hover_color=CARD_BORDER,
+            command=self.open_target_disk,
         )
-        self.cleanup_month_menu.pack(side="left", padx=(0, 6))
+        self.btn_open_disk.pack(side="right")
 
-        self.cleanup_day_menu = ctk.CTkOptionMenu(
-            date_picker,
-            values=day_values,
-            variable=self.cleanup_day,
-            width=74,
-            fg_color=BG,
-            button_color=PANEL_2,
-            button_hover_color=ACCENT_2,
+        # İlerleme Çubuğu ve Yüzde
+        progress_wrap = ctk.CTkFrame(view, fg_color=CARD_BG, corner_radius=10, border_width=1, border_color=CARD_BORDER, padx=20, pady=20)
+        progress_wrap.pack(fill="x", pady=(0, 20))
+
+        prog_hdr = ctk.CTkFrame(progress_wrap, fg_color="transparent")
+        prog_hdr.pack(fill="x", pady=(0, 8))
+
+        self.backup_status_text = ctk.CTkLabel(prog_hdr, text=t("backup_completed"), font=FONT_SUB, text_color=TEXT_WHITE)
+        self.backup_status_text.pack(side="left")
+
+        self.backup_pct_label = ctk.CTkLabel(prog_hdr, text="%0", font=FONT_TITLE, text_color=ACCENT_PINK)
+        self.backup_pct_label.pack(side="right")
+
+        self.backup_progress_bar = ctk.CTkProgressBar(progress_wrap, height=14, fg_color=BG_DARK, progress_color=ACCENT_PINK)
+        self.backup_progress_bar.set(0)
+        self.backup_progress_bar.pack(fill="x", pady=(0, 10))
+
+        self.lbl_time_remaining = ctk.CTkLabel(progress_wrap, text="", font=FONT_SMALL, text_color=TEXT_MUTED)
+        self.lbl_time_remaining.pack(anchor="w")
+
+        # Anlık Kopyalanan Dosya Kartı
+        self.current_copy_card = ctk.CTkFrame(view, fg_color=CARD_BG, corner_radius=10, border_width=1, border_color=CARD_BORDER, height=90)
+        self.current_copy_card.pack(fill="x", pady=(0, 24))
+        self.current_copy_card.pack_propagate(False)
+
+        self.cur_file_thumb = ctk.CTkLabel(self.current_copy_card, text="📷", font=("Segoe UI", 24), width=64, height=64, fg_color=BG_DARK, corner_radius=8)
+        self.cur_file_thumb.pack(side="left", padx=14, pady=12)
+
+        cur_info = ctk.CTkFrame(self.current_copy_card, fg_color="transparent")
+        cur_info.pack(side="left", fill="both", expand=True, pady=14)
+
+        self.cur_file_title = ctk.CTkLabel(cur_info, text=t("copying_file"), font=FONT_SMALL, text_color=ACCENT_PINK)
+        self.cur_file_title.pack(anchor="w")
+
+        self.cur_file_name = ctk.CTkLabel(cur_info, text="...", font=FONT_SUB, text_color=TEXT_WHITE)
+        self.cur_file_name.pack(anchor="w")
+
+        self.cur_file_size = ctk.CTkLabel(cur_info, text="", font=FONT_SMALL, text_color=TEXT_MUTED)
+        self.cur_file_size.pack(anchor="w")
+
+        # Butonlar (Duraklat, Durdur)
+        action_bar = ctk.CTkFrame(view, fg_color="transparent")
+        action_bar.pack(fill="x")
+
+        self.btn_pause = ctk.CTkButton(
+            action_bar,
+            text=f"⏸ {t('btn_pause')}",
+            font=FONT_SUB,
+            width=140,
+            height=40,
+            fg_color=CARD_BG,
+            hover_color=CARD_BG_2,
+            border_width=1,
+            border_color=CARD_BORDER,
+            command=self.toggle_pause_backup,
         )
-        self.cleanup_day_menu.pack(side="left")
-        self.update_cleanup_days()
+        self.btn_pause.pack(side="left")
 
-        ctk.CTkLabel(controls, text="Phone folder and backup folder are taken from tab 1.", font=FONT_TEXT, text_color=MUTED).grid(row=1, column=1, sticky="w", pady=(4, 0))
+        self.btn_stop = ctk.CTkButton(
+            action_bar,
+            text=f"⛔ {t('btn_stop')}",
+            font=FONT_SUB,
+            width=200,
+            height=40,
+            fg_color=CARD_BG,
+            hover_color=DANGER_RED,
+            border_width=1,
+            border_color=DANGER_RED,
+            text_color="#FFD6D6",
+            command=self.stop_backup_action,
+        )
+        self.btn_stop.pack(side="right")
 
-        self.phone_cleanup_status = ctk.CTkLabel(wrap, text="Ready to check phone cleanup candidates.", font=FONT_SUB, text_color=MUTED)
-        self.phone_cleanup_status.pack(anchor="w", padx=10, pady=(4, 8))
+        return view
 
-        self.phone_cleanup_progress = ctk.CTkProgressBar(wrap, width=760, height=14, fg_color=BG, progress_color=ACCENT)
-        self.phone_cleanup_progress.set(0)
-        self.phone_cleanup_progress.pack(anchor="w", padx=10, pady=(0, 14))
+    # ============================================================
+    #  ADIM 3: Tekrarları Temizle (Duplicate Cleanup)
+    # ============================================================
 
-        self.phone_cleanup_list = ctk.CTkScrollableFrame(wrap, fg_color=BG, corner_radius=8, height=300)
-        self.phone_cleanup_list.pack(fill="both", expand=True, padx=10, pady=(0, 12))
+    def build_step3_view(self) -> ctk.CTkFrame:
+        view = ctk.CTkFrame(self.main_container, fg_color="transparent")
+        view.grid_rowconfigure(2, weight=1)
+        view.grid_columnconfigure(0, weight=1)
 
-        buttons = ctk.CTkFrame(wrap, fg_color=PANEL)
-        buttons.pack(anchor="e", padx=10)
+        # Başlık
+        hdr = ctk.CTkFrame(view, fg_color="transparent")
+        hdr.grid(row=0, column=0, sticky="ew", pady=(10, 16))
+        self.dup_hdr = ctk.CTkLabel(hdr, text=t("dup_title"), font=FONT_HEAD, text_color=TEXT_WHITE)
+        self.dup_hdr.pack(anchor="w")
+        self.dup_sub_lbl = ctk.CTkLabel(hdr, text=t("dup_sub"), font=FONT_TEXT, text_color=TEXT_MUTED)
+        self.dup_sub_lbl.pack(anchor="w", pady=(4, 0))
 
-        self.btn_find_phone_cleanup = ctk.CTkButton(
-            buttons,
-            text="Find Deletable Files",
-            width=220,
-            height=42,
+        # 4 İstatistik Kartı
+        stats_frame = ctk.CTkFrame(view, fg_color="transparent")
+        stats_frame.grid(row=1, column=0, sticky="ew", pady=(0, 14))
+        for i in range(4):
+            stats_frame.grid_columnconfigure(i, weight=1)
+
+        self.tile_dup_cnt_val, self.tile_dup_cnt_lbl = self.build_dup_tile(stats_frame, 0, "🔄", PURPLE_DUP, "0", "dup_card_count")
+        self.tile_dup_spc_val, self.tile_dup_spc_lbl = self.build_dup_tile(stats_frame, 1, "💾", INFO_BLUE, "0 MB", "dup_card_space")
+        self.tile_dup_unq_val, self.tile_dup_unq_lbl = self.build_dup_tile(stats_frame, 2, "✨", OK_GREEN, "0", "dup_card_unique")
+        self.tile_dup_tot_val, self.tile_dup_tot_lbl = self.build_dup_tile(stats_frame, 3, "📷", ACCENT_PINK, "0", "dup_card_total")
+
+        # Tekrar Listesi Kartı
+        list_container = ctk.CTkFrame(view, fg_color=CARD_BG, corner_radius=10, border_width=1, border_color=CARD_BORDER)
+        list_container.grid(row=2, column=0, sticky="nsew", pady=(0, 14))
+        list_container.grid_rowconfigure(1, weight=1)
+        list_container.grid_columnconfigure(0, weight=1)
+
+        list_top = ctk.CTkFrame(list_container, fg_color="transparent")
+        list_top.grid(row=0, column=0, sticky="ew", padx=16, pady=12)
+
+        ctk.CTkLabel(list_top, text=t("dup_found_title"), font=FONT_TITLE, text_color=TEXT_WHITE).pack(side="left")
+
+        self.btn_rescan_dup = ctk.CTkButton(
+            list_top,
+            text=f"🔄 {t('btn_rescan_duplicates')}",
+            font=FONT_SMALL,
+            width=110,
+            height=30,
+            fg_color=CARD_BG_2,
+            hover_color=CARD_BORDER,
+            command=self.trigger_duplicate_scan,
+        )
+        self.btn_rescan_dup.pack(side="right")
+
+        self.dup_scroll = ctk.CTkScrollableFrame(list_container, fg_color=BG_DARK, corner_radius=8)
+        self.dup_scroll.grid(row=1, column=0, sticky="nsew", padx=14, pady=(0, 12))
+
+        # Alt Butonlar
+        bot_bar = ctk.CTkFrame(view, fg_color="transparent")
+        bot_bar.grid(row=3, column=0, sticky="ew")
+
+        self.lbl_dup_selection_info = ctk.CTkLabel(bot_bar, text="", font=FONT_TEXT, text_color=TEXT_MUTED)
+        self.lbl_dup_selection_info.pack(side="left")
+
+        self.btn_del_dup = ctk.CTkButton(
+            bot_bar,
+            text=f"🗑 {t('btn_delete_duplicates')}",
+            font=FONT_SUB,
+            fg_color=ACCENT_PINK,
+            hover_color=ACCENT_PINK_HOVER,
+            height=38,
+            corner_radius=8,
+            command=self.delete_selected_duplicates,
+        )
+        self.btn_del_dup.pack(side="right")
+
+        return view
+
+    def build_dup_tile(self, parent, col: int, icon: str, color: str, initial_val: str, label_key: str):
+        tile = ctk.CTkFrame(parent, fg_color=CARD_BG, corner_radius=10, border_width=1, border_color=CARD_BORDER)
+        tile.grid(row=0, column=col, sticky="ew", padx=4)
+
+        icon_lbl = ctk.CTkLabel(tile, text=icon, font=("Segoe UI", 18), width=36, height=36, fg_color=CARD_BG_2, corner_radius=8)
+        icon_lbl.pack(side="left", padx=10, pady=10)
+
+        t_frame = ctk.CTkFrame(tile, fg_color="transparent")
+        t_frame.pack(side="left", fill="both", expand=True, pady=8)
+
+        v_lbl = ctk.CTkLabel(t_frame, text=initial_val, font=FONT_TITLE, text_color=TEXT_WHITE)
+        v_lbl.pack(anchor="w")
+
+        d_lbl = ctk.CTkLabel(t_frame, text=t(label_key), font=FONT_SMALL, text_color=TEXT_MUTED)
+        d_lbl.pack(anchor="w")
+
+        return v_lbl, d_lbl
+
+    # ============================================================
+    #  ADIM 4: Telefonda Temizle (Phone Cleanup)
+    # ============================================================
+
+    def build_step4_view(self) -> ctk.CTkFrame:
+        view = ctk.CTkFrame(self.main_container, fg_color="transparent")
+        view.grid_columnconfigure(0, weight=1)
+
+        # Başlık
+        hdr = ctk.CTkFrame(view, fg_color="transparent")
+        hdr.pack(fill="x", pady=(10, 16))
+        self.pclean_hdr = ctk.CTkLabel(hdr, text=t("phone_clean_title"), font=FONT_HEAD, text_color=TEXT_WHITE)
+        self.pclean_hdr.pack(anchor="w")
+        self.pclean_sub = ctk.CTkLabel(hdr, text=t("phone_clean_sub"), font=FONT_TEXT, text_color=TEXT_MUTED)
+        self.pclean_sub.pack(anchor="w", pady=(4, 0))
+
+        # Tarih Seçim Kartı
+        date_card = ctk.CTkFrame(view, fg_color=CARD_BG, corner_radius=10, border_width=1, border_color=CARD_BORDER)
+        date_card.pack(fill="x", pady=(0, 14))
+
+        d_top = ctk.CTkFrame(date_card, fg_color="transparent")
+        d_top.pack(fill="x", padx=16, pady=14)
+
+        cal_icon = ctk.CTkLabel(d_top, text="📅", font=("Segoe UI", 24), width=48, height=48, fg_color=CARD_BG_2, corner_radius=10)
+        cal_icon.pack(side="left", padx=(0, 14))
+
+        d_txt = ctk.CTkFrame(d_top, fg_color="transparent")
+        d_txt.pack(side="left", fill="both")
+        self.clean_date_lbl = ctk.CTkLabel(d_txt, text=t("clean_date_title"), font=FONT_SUB, text_color=TEXT_WHITE)
+        self.clean_date_lbl.pack(anchor="w")
+        self.clean_date_sub = ctk.CTkLabel(d_txt, text=t("clean_date_sub"), font=FONT_SMALL, text_color=TEXT_MUTED)
+        self.clean_date_sub.pack(anchor="w")
+
+        # Tarih Seçiciler (Yıl, Ay, Gün)
+        picker_box = ctk.CTkFrame(d_top, fg_color="transparent")
+        picker_box.pack(side="right")
+
+        years = [str(y) for y in range(datetime.now().year, 2011, -1)]
+        months = [f"{m:02d}" for m in range(1, 13)]
+
+        self.menu_year = ctk.CTkOptionMenu(picker_box, values=years, variable=self.cleanup_year, width=85, height=32, fg_color=CARD_BG_2, button_color=CARD_BORDER, command=lambda _v: self.update_cleanup_days())
+        self.menu_year.pack(side="left", padx=4)
+
+        self.menu_month = ctk.CTkOptionMenu(picker_box, values=months, variable=self.cleanup_month, width=70, height=32, fg_color=CARD_BG_2, button_color=CARD_BORDER, command=lambda _v: self.update_cleanup_days())
+        self.menu_month.pack(side="left", padx=4)
+
+        self.menu_day = ctk.CTkOptionMenu(picker_box, values=[f"{d:02d}" for d in range(1, 32)], variable=self.cleanup_day, width=70, height=32, fg_color=CARD_BG_2, button_color=CARD_BORDER)
+        self.menu_day.pack(side="left", padx=4)
+
+        self.btn_find_clean = ctk.CTkButton(
+            picker_box,
+            text=t("btn_find_phone_cleanup"),
+            font=FONT_SUB,
+            width=140,
+            height=32,
+            fg_color=ACCENT_PINK,
+            hover_color=ACCENT_PINK_HOVER,
             command=self.trigger_phone_cleanup_scan,
-            **button_style("primary"),
         )
-        self.btn_find_phone_cleanup.pack(side="left", padx=(0, 10))
+        self.btn_find_clean.pack(side="left", padx=(10, 0))
 
-        self.btn_delete_phone_cleanup = ctk.CTkButton(
-            buttons,
-            text="Delete From Phone",
+        # Silinecek Medya Özeti
+        self.media_summary_card = ctk.CTkFrame(view, fg_color=CARD_BG, corner_radius=10, border_width=1, border_color=CARD_BORDER)
+        self.media_summary_card.pack(fill="x", pady=(0, 14))
+
+        m_top = ctk.CTkFrame(self.media_summary_card, fg_color="transparent")
+        m_top.pack(fill="x", padx=16, pady=12)
+
+        trash_icon = ctk.CTkLabel(m_top, text="🗑️", font=("Segoe UI", 24), width=48, height=48, fg_color=CARD_BG_2, corner_radius=10)
+        trash_icon.pack(side="left", padx=(0, 14))
+
+        m_info = ctk.CTkFrame(m_top, fg_color="transparent")
+        m_info.pack(side="left", fill="both")
+        ctk.CTkLabel(m_info, text=t("media_to_delete"), font=FONT_TITLE, text_color=TEXT_WHITE).pack(anchor="w")
+        self.lbl_clean_summary = ctk.CTkLabel(m_info, text="0 Fotoğraf  |  0 Video  |  Toplam: 0", font=FONT_SUB, text_color=TEXT_MUTED)
+        self.lbl_clean_summary.pack(anchor="w")
+
+        # Uyarı Kutusu (Sarı İkaz)
+        warn_card = ctk.CTkFrame(view, fg_color="#1E1A11", corner_radius=10, border_width=1, border_color="#523E15")
+        warn_card.pack(fill="x", pady=(0, 20))
+
+        w_inner = ctk.CTkFrame(warn_card, fg_color="transparent")
+        w_inner.pack(fill="x", padx=16, pady=14)
+
+        warn_icon = ctk.CTkLabel(w_inner, text="⚠️", font=("Segoe UI", 22), text_color=WARN_YELLOW)
+        warn_icon.pack(side="left", anchor="n", padx=(0, 12))
+
+        w_text = ctk.CTkFrame(w_inner, fg_color="transparent")
+        w_text.pack(side="left", fill="both", expand=True)
+
+        self.lbl_warn_hdr = ctk.CTkLabel(w_text, text=t("warning_title"), font=FONT_SUB, text_color=WARN_YELLOW)
+        self.lbl_warn_hdr.pack(anchor="w")
+
+        self.lbl_warn_1 = ctk.CTkLabel(w_text, text=t("warning_bullet_1"), font=FONT_SMALL, text_color="#E2D4B3")
+        self.lbl_warn_1.pack(anchor="w", pady=(2, 0))
+        self.lbl_warn_2 = ctk.CTkLabel(w_text, text=t("warning_bullet_2"), font=FONT_SMALL, text_color="#E2D4B3")
+        self.lbl_warn_2.pack(anchor="w")
+        self.lbl_warn_3 = ctk.CTkLabel(w_text, text=t("warning_bullet_3"), font=FONT_SMALL, text_color="#E2D4B3")
+        self.lbl_warn_3.pack(anchor="w")
+
+        # Alt Butonlar
+        p_bot = ctk.CTkFrame(view, fg_color="transparent")
+        p_bot.pack(fill="x")
+
+        self.btn_back_to_3 = ctk.CTkButton(
+            p_bot,
+            text=f"← {t('btn_back')}",
+            font=FONT_SUB,
+            width=100,
+            height=38,
+            fg_color=CARD_BG,
+            hover_color=CARD_BG_2,
+            command=lambda: self.show_step(3),
+        )
+        self.btn_back_to_3.pack(side="left")
+
+        self.btn_start_clean = ctk.CTkButton(
+            p_bot,
+            text=f"🗑 {t('btn_start_phone_clean')}",
+            font=FONT_SUB,
             width=220,
-            height=42,
+            height=40,
+            fg_color=DANGER_RED,
+            hover_color="#DC2626",
             command=self.trigger_phone_cleanup_delete,
             state="disabled",
-            **button_style("danger"),
         )
-        self.btn_delete_phone_cleanup.pack(side="left")
+        self.btn_start_clean.pack(side="right")
 
-    # ---------------- Helpers ----------------
-
-    def set_status(self, text, color=PANEL_2):
-        self.status_badge.configure(text=text, fg_color=color)
-
-    def lock_ui(self, operation: str = "operation", risky: bool = False):
-        self.is_busy = True
-        self.active_operation = operation
-        self.active_operation_is_risky = risky
-        self.btn_scan.configure(state="disabled")
-        self.btn_start_backup.configure(state="disabled")
-        self.btn_clean.configure(state="disabled")
-        self.btn_go_backup.configure(state="disabled")
-        self.btn_load_more.configure(state="disabled")
-        self.btn_find_phone_cleanup.configure(state="disabled")
-        self.btn_delete_phone_cleanup.configure(state="disabled")
-
-    def unlock_ui(self):
-        self.is_busy = False
-        self.active_operation = ""
-        self.active_operation_is_risky = False
-        self.btn_scan.configure(state="normal")
-        self.btn_clean.configure(state="normal")
-        self.btn_find_phone_cleanup.configure(state="normal")
-        if self.phone_cleanup_candidates:
-            self.btn_delete_phone_cleanup.configure(state="normal")
-        if self.media_items:
-            self.btn_go_backup.configure(state="normal")
-            self.btn_start_backup.configure(state="normal")
-            if self.gallery_offset < len(self.filtered_items):
-                self.btn_load_more.configure(state="normal")
-
-    def run_adb(self, args, timeout=None, text=True):
-        return subprocess.run(
-            [ADB_PATH, *args],
-            capture_output=True,
-            text=text,
-            encoding="utf-8" if text else None,
-            errors="replace" if text else None,
-            timeout=timeout,
-            creationflags=creation_flags(),
-        )
-
-    def select_target(self):
-        path = filedialog.askdirectory(title="Choose backup folder")
-        if path:
-            self.target_path.set(path)
-            self.disk_index_cache = None
-            self.disk_index_target = ""
-
-    def selected_cleanup_date_text(self) -> str:
-        return f"{self.cleanup_year.get()}-{self.cleanup_month.get()}-{self.cleanup_day.get()}"
+        return view
 
     def update_cleanup_days(self):
         try:
@@ -562,132 +1159,85 @@ class PhoneBackupPro(ctk.CTk):
             month = int(self.cleanup_month.get())
         except ValueError:
             return
-
         max_day = calendar.monthrange(year, month)[1]
         values = [f"{day:02d}" for day in range(1, max_day + 1)]
-        current_day = self.cleanup_day.get()
-        self.cleanup_day_menu.configure(values=values)
-        if current_day not in values:
+        self.menu_day.configure(values=values)
+        if self.cleanup_day.get() not in values:
             self.cleanup_day.set(values[-1])
 
-    def is_ios_mode(self) -> bool:
-        return "iphone" in self.device_mode_var.get().lower() or "ios" in self.device_mode_var.get().lower()
+    # ============================================================
+    #  Yardımcı İşlemler & İletişim Fonksiyonları
+    # ============================================================
 
-    def on_device_mode_changed(self, mode: str):
-        if self.is_ios_mode():
-            devices = ios_manager.list_ios_devices()
-            if devices:
-                self.source_path.set(f"{devices[0]}/DCIM")
-                self.set_status(f"iOS: {devices[0]}", OK)
-            else:
-                self.source_path.set("Apple iPhone / DCIM")
-                self.set_status("iOS: iPhone bekleniyor", ACCENT_2)
-        else:
-            self.source_path.set("/sdcard")
-            self.set_status("Android (ADB)", PANEL_2)
-        self.clear_analysis_ui()
+    def run_adb(self, args: list[str], timeout: int = 40, text: bool = True) -> subprocess.CompletedProcess:
+        cmd = [ADB_PATH] + args
+        return subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=text,
+            encoding="utf-8" if text else None,
+            errors="replace" if text else None,
+            timeout=timeout,
+            creationflags=creation_flags(),
+        )
 
-    def test_device(self):
-        if self.is_ios_mode():
-            devices = ios_manager.list_ios_devices()
-            if devices:
-                dev_list = "\n".join([f"• {d}" for d in devices])
-                messagebox.showinfo("Cihaz Bağlandı", f"Bağlı Apple iOS cihazı bulundu:\n\n{dev_list}\n\n'Scan & Show Gallery' butonuna basarak fotoğrafları tarayabilirsiniz.")
-            else:
-                messagebox.showwarning(
-                    "iPhone Bulunamadı",
-                    "Bağlı Apple iPhone / iPad tespit edilemedi.\n\n"
-                    "Lütfen şunları kontrol edin:\n"
-                    "1. Telefonunuzu USB kablo ile bilgisayara bağlayın.\n"
-                    "2. Telefonunuzun ekran kilidini açın.\n"
-                    "3. Ekranda 'Bu Bilgisayara Güvenilsin mi?' sorusu çıkarsa 'Güven'i seçip şifrenizi girin."
-                )
-            return
+    def select_target_disk(self):
+        p = filedialog.askdirectory(title=t("card_target_folder"))
+        if p:
+            self.target_path.set(p)
+            self.dst_name_lbl.configure(text=p)
+            self.disk_index_cache = None
+            self.disk_index_target = ""
 
-        try:
-            result = self.run_adb(["devices"], timeout=10)
-            lines = [x.strip() for x in result.stdout.splitlines() if x.strip()]
-            devices = [x for x in lines[1:] if "\tdevice" in x]
-            if devices:
-                messagebox.showinfo("Device Connected", f"ADB device is ready:\n{devices[0]}")
-            else:
-                messagebox.showwarning("Device Not Found", "Connect your phone with USB, enable USB debugging, and approve the permission prompt on the phone.")
-        except FileNotFoundError:
-            messagebox.showerror("ADB Missing", "adb_tools/adb.exe was not found and adb is not available in PATH.")
-        except Exception as e:
-            messagebox.showerror("ADB Error", str(e))
-
-    def normalize_android_path(self, path: str) -> str:
-        p = path.strip().replace("\\", "/")
-        p = re.sub(r"^/storage/emulated/0", "/sdcard", p)
-        p = re.sub(r"^/storage/self/primary", "/sdcard", p)
-        p = re.sub(r"^/mnt/sdcard", "/sdcard", p)
-        return p
-
-    def normalize_remote_path(self, remote_path: str, source: str) -> str:
-        remote_norm = self.normalize_android_path(remote_path)
-        source_norm = self.normalize_android_path(source).rstrip("/") + "/"
-        if remote_norm.startswith(source_norm):
-            return remote_norm[len(source_norm):].lstrip("/")
-
-        for prefix in ["/sdcard/", "/storage/emulated/0/", "/storage/self/primary/", "/mnt/sdcard/"]:
-            if remote_path.startswith(prefix):
-                return remote_path[len(prefix):].lstrip("/")
-        return remote_path.split("/")[-1]
-
-    def local_index(self, target: str) -> dict[str, any]:
-        target_path = Path(target)
-        index = {"path_sizes": {}, "paths": set(), "names": set(), "name_entries": {}}
-        if not target_path.exists():
-            return index
-
-        for root, _dirs, files in os.walk(target_path):
-            for name in files:
-                try:
-                    full = Path(root) / name
-                    rel = full.relative_to(target_path).as_posix().lower()
-                    size = full.stat().st_size
-                    index["path_sizes"][rel] = size
-                    index["paths"].add(rel)
-                    name_lower = name.lower()
-                    index["names"].add(name_lower)
-                    index["name_entries"].setdefault(name_lower, []).append((rel, size))
-                except OSError:
-                    continue
-        return index
-
-    def cached_local_index(self, target: str) -> dict[str, any]:
-        normalized = str(Path(target).resolve()).lower()
-        if self.disk_index_cache is not None and self.disk_index_target == normalized:
-            return self.disk_index_cache
-
-        index = self.local_index(target)
-        self.disk_index_cache = index
-        self.disk_index_target = normalized
-        return index
-
-    # ---------------- Scan ----------------
-
-    def trigger_scan(self):
-        if self.is_busy:
-            return
-
-        source = self.source_path.get().strip().rstrip("/")
+    def open_target_disk(self):
         target = self.target_path.get().strip()
+        if target and os.path.exists(target):
+            try:
+                os.startfile(target)
+            except Exception:
+                pass
 
-        if not source:
-            messagebox.showwarning("Missing Information", "Phone folder cannot be empty. Example: /sdcard")
-            return
-        if not target:
-            messagebox.showwarning("Missing Information", "Choose the disk folder for the backup first.")
-            return
+    def test_device_action(self):
+        if self.is_ios_mode():
+            devs = ios_manager.list_ios_devices()
+            if devs:
+                self.set_device_connected_ui(True, devs[0])
+                messagebox.showinfo("iOS", f"Apple iPhone / iPad:\n{devs[0]}")
+            else:
+                self.set_device_connected_ui(False, "Apple iPhone")
+                messagebox.showwarning(
+                    "iOS",
+                    "Apple iPhone bulunamadı.\n\n"
+                    "1. USB kablosunu kontrol edin.\n"
+                    "2. Telefon ekran kilidini açın.\n"
+                    "3. 'Bu Bilgisayara Güven' onayını verin.",
+                )
+        else:
+            try:
+                res = self.run_adb(["devices"], timeout=10)
+                lines = [x.strip() for x in res.stdout.splitlines() if x.strip()]
+                devs = [x for x in lines[1:] if "\tdevice" in x]
+                if devs:
+                    self.detect_android_device()
+                    messagebox.showinfo("Android", f"Cihaz Hazır:\n{devs[0]}")
+                else:
+                    self.set_device_connected_ui(False, "Android")
+                    messagebox.showwarning(
+                        "Android",
+                        "Android cihaz bulunamadı.\n\n"
+                        "1. USB Hata Ayıklama modunu açın.\n"
+                        "2. Telefonda çıkan izni onaylayın.",
+                    )
+            except Exception as e:
+                messagebox.showerror("Hata", str(e))
 
-        self.clear_analysis_ui()
-        self.lock_ui("phone scan", risky=False)
-        self.set_status("Scanning...", ACCENT_2)
-        self.btn_scan.configure(text="Scanning...")
-        self.scan_progress.set(0.08)
-        threading.Thread(target=self.scan_worker, args=(source, target), daemon=True).start()
+    def show_about_dialog(self):
+        messagebox.showinfo(t("about_title"), t("about_desc"))
+
+    # ============================================================
+    #  Tarama Mantığı (Scan Logic)
+    # ============================================================
 
     def clear_analysis_ui(self):
         for frame in (self.folder_scroll, self.gallery_scroll):
@@ -697,37 +1247,46 @@ class PhoneBackupPro(ctk.CTk):
         self.filtered_items.clear()
         self.sync_plan.clear()
         self.folder_vars.clear()
+        self.item_select_vars.clear()
         self.thumb_refs.clear()
         self.thumb_cache.clear()
         self.gallery_offset = 0
-        self.progress.set(0)
-        self.scan_progress.set(0)
-        self.summary_label.configure(text="Scanning phone...")
-        self.new_count_label.configure(text="0")
-        self.existing_count_label.configure(text="0")
-        self.total_count_label.configure(text="0")
-        self.preview_photo_ref = None
-        self.preview_image_label.configure(image=None, text="Select a photo name to preview it here.")
-        self.preview_meta_label.configure(text="No file selected")
+
+        self.tile_total_val.configure(text="0")
+        self.tile_new_val.configure(text="0")
+        self.tile_ondisk_val.configure(text="0")
+        self.tile_dup_val.configure(text="0")
+        self.lbl_footer_status.configure(text="")
+        self.btn_load_more.configure(state="disabled")
+
+    def trigger_scan(self):
+        if self.is_busy:
+            return
+        target = self.target_path.get().strip()
+        if not target:
+            messagebox.showwarning("Hedef Seçilmedi", t("card_target_folder_sub"))
+            self.select_target_disk()
+            target = self.target_path.get().strip()
+            if not target:
+                return
+
+        source = self.source_path.get().strip()
+        self.clear_analysis_ui()
+        self.is_busy = True
+        self.btn_scan_main.configure(state="disabled", text=t("scanning"))
+        self.lbl_gallery_sub.configure(text=t("scanning"))
+        threading.Thread(target=self.scan_worker, args=(source, target), daemon=True).start()
 
     def scan_worker(self, source: str, target: str):
         try:
-            self.after(0, lambda: (self.summary_label.configure(text="Indexing target disk..."), self.scan_progress.set(0.22)))
             existing = self.cached_local_index(target)
 
             if self.is_ios_mode():
-                self.after(0, lambda: (self.summary_label.configure(text="Scanning iPhone media (DCIM)..."), self.scan_progress.set(0.45)))
-                devices = ios_manager.list_ios_devices()
-                dev_name = devices[0] if devices else ""
-                raw_items = ios_manager.scan_ios_media(
-                    device_name=dev_name,
-                    progress_callback=lambda c: self.after(0, lambda c=c: self.summary_label.configure(text=f"Scanning iPhone... {c} media files found")),
-                )
+                devs = ios_manager.list_ios_devices()
+                dev_name = devs[0] if devs else ""
+                raw_items = ios_manager.scan_ios_media(device_name=dev_name)
                 if not raw_items:
-                    self.after(0, lambda: self.scan_failed(
-                        "No photos or videos found on iPhone.\n\n"
-                        "Please ensure your iPhone screen is UNLOCKED and you have approved 'Trust This Computer'."
-                    ))
+                    self.after(0, lambda: self.scan_finished_error("iPhone'da fotoğraf bulunamadı. Ekran kilidini açıp güven onayını verin."))
                     return
 
                 items: list[MediaItem] = []
@@ -768,11 +1327,10 @@ class PhoneBackupPro(ctk.CTk):
                         cleanup_ts=raw["modify_ts"],
                     ))
             else:
-                self.after(0, lambda: (self.summary_label.configure(text="Finding media files on the phone..."), self.scan_progress.set(0.55)))
-                items = self.get_phone_media(source, existing)
+                items = self.get_phone_media_android(source, existing)
 
             if not items:
-                self.after(0, lambda: self.scan_failed("No photos or videos were found under this phone folder. Try /sdcard as the source path."))
+                self.after(0, lambda: self.scan_finished_error("Telefonda fotoğraf veya video bulunamadı."))
                 return
 
             plan: dict[str, list[MediaItem]] = {}
@@ -780,221 +1338,79 @@ class PhoneBackupPro(ctk.CTk):
                 if not item.exists_locally:
                     plan.setdefault(item.folder, []).append(item)
 
-            self.after(0, lambda: self.scan_progress.set(0.82))
-            self.after(0, lambda: self.scan_finished(items, plan))
-        except FileNotFoundError:
-            self.after(0, lambda: self.scan_failed("ADB was not found. Put adb_tools/adb.exe next to this app or add adb to PATH."))
+            self.after(0, lambda: self.scan_success(items, plan))
         except Exception as e:
-            self.after(0, lambda: self.scan_failed(f"Scan error:\n{e}"))
+            self.after(0, lambda err=e: self.scan_finished_error(str(err)))
 
-    def get_phone_media(self, source: str, existing: dict[str, any]) -> list[MediaItem]:
-        # Merge MediaStore and find results so no files are missed
-        mediastore_rows = self.query_mediastore(source)
-        find_rows = self.query_find(source)
+    def scan_finished_error(self, message: str):
+        self.is_busy = False
+        self.btn_scan_main.configure(state="normal", text=t("btn_scan"))
+        self.lbl_gallery_sub.configure(text=message)
+        messagebox.showerror("Tarama Hatası", message)
 
-        merged_dict: dict[str, int | None] = {}
-        for path, size in mediastore_rows:
-            merged_dict[path] = size
-        for path, size in find_rows:
-            if path not in merged_dict or (size is not None and merged_dict[path] is None):
-                merged_dict[path] = size
-
-        seen = set()
-        items: list[MediaItem] = []
-
-        for remote_path, size in merged_dict.items():
-            lower = remote_path.lower()
-            if lower in seen or not lower.endswith(MEDIA_EXTS):
-                continue
-            seen.add(lower)
-
-            rel = self.normalize_remote_path(remote_path, source)
-            safe_rel = sanitize_rel_path(rel)
-            name = remote_path.split("/")[-1]
-            folder = os.path.dirname(safe_rel).replace("\\", "/") or "Root"
-            kind = "image" if lower.endswith(IMAGE_EXTS) else "video"
-
-            safe_rel_lower = safe_rel.lower()
-            name_lower = name.lower()
-
-            exists = False
-            # 1. Exact path match
-            if safe_rel_lower in existing["path_sizes"]:
-                local_size = existing["path_sizes"][safe_rel_lower]
-                if size is not None:
-                    exists = (local_size == size)
-                else:
-                    exists = (local_size > 0)
-
-            # 2. Match across shifted/flattened folders (e.g. Camera/ or root instead of DCIM/Camera/)
-            if not exists and name_lower in existing.get("name_entries", {}):
-                name_matches = existing["name_entries"][name_lower]
-                for local_rel, local_size in name_matches:
-                    if local_size <= 0:
-                        continue
-                    if size is not None:
-                        # Exact size match on the same filename = identical file
-                        if local_size == size:
-                            exists = True
-                            break
-                    else:
-                        # Size not known: match if relative path aligns or is at root
-                        if safe_rel_lower.endswith(local_rel) or local_rel.endswith(name_lower):
-                            exists = True
-                            break
-
-            items.append(MediaItem(
-                remote_path=remote_path,
-                rel_path=safe_rel,
-                file_name=name,
-                folder=folder,
-                size=size,
-                kind=kind,
-                exists_locally=exists,
-            ))
-
-        items.sort(key=lambda x: (x.folder.lower(), x.file_name.lower()))
-        return items
-
-    def query_mediastore(self, source: str) -> list[tuple[str, int | None]]:
-        # Query MediaStore with colon-separated projection format (adb shell content requirement)
-        cmd = ["shell", "content", "query", "--uri", "content://media/external/file", "--projection", "_data:_size"]
-        result = self.run_adb(cmd, timeout=45)
-        if result.returncode != 0 or not result.stdout.strip():
-            cmd = ["shell", "content", "query", "--uri", "content://media/external/file", "--projection", "_data"]
-            result = self.run_adb(cmd, timeout=45)
-        if result.returncode != 0 or not result.stdout.strip():
-            return []
-
-        search_filter = self.normalize_android_path(source).rstrip("/")
-        rows: list[tuple[str, int | None]] = []
-
-        for line in result.stdout.splitlines():
-            if "_data=" not in line:
-                continue
-            m = re.search(r"_data=(.+?)(?:,\s*_size=|$)", line)
-            if not m:
-                continue
-            path = m.group(1).strip()
-
-            size = None
-            size_match = re.search(r"_size=(\d+)", line)
-            if size_match:
-                try:
-                    size = int(size_match.group(1))
-                except ValueError:
-                    pass
-
-            norm_path = self.normalize_android_path(path)
-            if not norm_path.startswith(search_filter):
-                continue
-            rows.append((path, size))
-
-        return rows
-
-    def query_find(self, source: str) -> list[tuple[str, int | None]]:
-        # Find files directly on the Android file system
-        patterns = " -o ".join([f"-iname '*{ext}'" for ext in MEDIA_EXTS])
-        cmd = f"find {shell_quote(source)} -type f \\( {patterns} \\) 2>/dev/null"
-        result = self.run_adb(["shell", cmd], timeout=90)
-        if result.returncode != 0 and not result.stdout.strip():
-            return []
-        return [(line.strip(), None) for line in result.stdout.splitlines() if line.strip()]
-
-    def scan_finished(self, items: list[MediaItem], plan: dict[str, list[MediaItem]]):
+    def scan_success(self, items: list[MediaItem], plan: dict[str, list[MediaItem]]):
+        self.is_busy = False
         self.media_items = items
-        self.sync_plan = plan
         self.filtered_items = list(items)
-        self.render_folder_list()
-        self.render_gallery(reset=True)
+        self.sync_plan = plan
 
         total = len(items)
-        images = sum(1 for x in items if x.kind == "image")
-        videos = total - images
-        new_files = sum(1 for x in items if not x.exists_locally)
-        existing = total - new_files
+        new_cnt = sum(1 for it in items if not it.exists_locally)
+        ondisk_cnt = total - new_cnt
 
-        self.new_count_label.configure(text=str(new_files))
-        self.existing_count_label.configure(text=str(existing))
-        self.total_count_label.configure(text=str(total))
-        self.summary_label.configure(
-            text=f"Found {images} photos and {videos} videos on the phone."
-        )
-        self.scan_progress.set(1)
-        self.backup_info.configure(text=f"Ready to back up: {new_files} new files can be selected.", text_color=TEXT)
-        self.btn_scan.configure(text="Scan Again")
-        self.set_status("Scan complete", OK)
-        self.unlock_ui()
+        self.tile_total_val.configure(text=f"{total:,}")
+        self.tile_new_val.configure(text=f"{new_cnt:,}")
+        self.tile_ondisk_val.configure(text=f"{ondisk_cnt:,}")
+        self.lbl_footer_status.configure(text=t("files_found", count=f"{total:,}"))
 
-    def scan_failed(self, message: str):
-        self.btn_scan.configure(text="Scan & Show Gallery")
-        self.scan_progress.set(0)
-        self.set_status("Error", DANGER)
-        self.unlock_ui()
-        messagebox.showerror("Scan Error", message)
+        self.btn_scan_main.configure(state="normal", text=t("btn_scan_again"))
+        self.lbl_gallery_sub.configure(text=t("files_found", count=f"{total:,}"))
 
-    # ---------------- Render folders & gallery ----------------
+        self.render_folders_list()
+        self.render_gallery_cards(reset=True)
 
-    def render_folder_list(self):
+    def render_folders_list(self):
         for child in self.folder_scroll.winfo_children():
             child.destroy()
 
-        if not self.sync_plan:
-            ctk.CTkLabel(
-                self.folder_scroll,
-                text="No new files found.\nThe gallery is still available on the right.",
-                font=FONT_TEXT,
-                text_color=MUTED,
-                justify="left",
-            ).pack(anchor="w", padx=12, pady=12)
-            return
+        # "Tümü" satırı
+        all_row = ctk.CTkFrame(self.folder_scroll, fg_color=CARD_BG_2, corner_radius=6, height=36, cursor="hand2")
+        all_row.pack(fill="x", pady=3)
+        all_row.pack_propagate(False)
 
-        for folder, files in sorted(self.sync_plan.items(), key=lambda x: x[0].lower()):
-            var = ctk.BooleanVar(value=True)
-            self.folder_vars[folder] = var
+        ctk.CTkLabel(all_row, text=t("all_folders"), font=FONT_SUB, text_color=TEXT_WHITE).pack(side="left", padx=10)
+        ctk.CTkLabel(all_row, text=str(len(self.media_items)), font=FONT_SMALL, text_color=ACCENT_PINK).pack(side="right", padx=10)
+        all_row.bind("<Button-1>", lambda _e: self.filter_by_folder(""))
 
-            row = ctk.CTkFrame(self.folder_scroll, fg_color=PANEL_2, corner_radius=8)
-            row.pack(fill="x", padx=8, pady=5)
-            row.grid_columnconfigure(1, weight=1)
+        # Klasör bazlı gruplar
+        folder_counts = {}
+        for it in self.media_items:
+            folder_counts[it.folder] = folder_counts.get(it.folder, 0) + 1
 
-            cb = ctk.CTkCheckBox(
-                row,
-                text="",
-                variable=var,
-                font=FONT_TEXT,
-                text_color=TEXT,
-                hover_color=ACCENT,
-                fg_color=ACCENT,
-                width=28,
-            )
-            cb.grid(row=0, column=0, rowspan=2, padx=(10, 4), pady=10)
+        for f_name, count in sorted(folder_counts.items(), key=lambda x: x[0].lower()):
+            f_row = ctk.CTkFrame(self.folder_scroll, fg_color="transparent", corner_radius=6, height=32, cursor="hand2")
+            f_row.pack(fill="x", pady=2)
+            f_row.pack_propagate(False)
 
-            folder_button = ctk.CTkButton(
-                row,
-                text=self.truncate_middle(folder, 34),
-                fg_color="transparent",
-                hover_color=ACCENT_2,
-                text_color=TEXT,
-                anchor="w",
-                font=FONT_TEXT,
-                command=lambda f=folder: self.filter_folder(f),
-            )
-            folder_button.grid(row=0, column=1, sticky="ew", padx=(2, 10), pady=(8, 0))
+            short_name = f_name.split("/")[-1] or f_name
+            if len(short_name) > 16:
+                short_name = short_name[:14] + ".."
 
-            ctk.CTkLabel(
-                row,
-                text=f"{len(files)} new files",
-                font=("Segoe UI", 18, "bold"),
-                text_color=OK,
-            ).grid(row=1, column=1, sticky="w", padx=(8, 10), pady=(0, 8))
+            lbl_n = ctk.CTkLabel(f_row, text=short_name, font=FONT_TEXT, text_color=TEXT_WHITE)
+            lbl_n.pack(side="left", padx=10)
 
-    def truncate_middle(self, text: str, max_len: int) -> str:
-        if len(text) <= max_len:
-            return text
-        keep = max_len - 3
-        left = max(keep // 2, 1)
-        right = max(keep - left, 1)
-        return f"{text[:left]}...{text[-right:]}"
+            lbl_c = ctk.CTkLabel(f_row, text=str(count), font=FONT_SMALL, text_color=TEXT_MUTED)
+            lbl_c.pack(side="right", padx=10)
+
+            for w in (f_row, lbl_n, lbl_c):
+                w.bind("<Button-1>", lambda _e, folder=f_name: self.filter_by_folder(folder))
+
+    def filter_by_folder(self, folder: str):
+        if not folder:
+            self.filtered_items = list(self.media_items)
+        else:
+            self.filtered_items = [it for it in self.media_items if it.folder == folder or it.folder.startswith(folder)]
+        self.render_gallery_cards(reset=True)
 
     def apply_filter(self):
         q = self.search_text.get().strip().lower()
@@ -1002,16 +1418,12 @@ class PhoneBackupPro(ctk.CTk):
             self.filtered_items = list(self.media_items)
         else:
             self.filtered_items = [
-                item for item in self.media_items
-                if q in item.file_name.lower() or q in item.folder.lower() or q in item.rel_path.lower()
+                it for it in self.media_items
+                if q in it.file_name.lower() or q in it.folder.lower()
             ]
-        self.render_gallery(reset=True)
+        self.render_gallery_cards(reset=True)
 
-    def filter_folder(self, folder: str):
-        self.search_text.set(folder)
-        self.apply_filter()
-
-    def render_gallery(self, reset=False):
+    def render_gallery_cards(self, reset=True):
         if reset:
             for child in self.gallery_scroll.winfo_children():
                 child.destroy()
@@ -1019,7 +1431,7 @@ class PhoneBackupPro(ctk.CTk):
             self.thumb_refs.clear()
 
         if not self.filtered_items:
-            ctk.CTkLabel(self.gallery_scroll, text="No files match this filter.", text_color=MUTED, font=FONT_TEXT).pack(pady=20)
+            ctk.CTkLabel(self.gallery_scroll, text="Medya bulunamadı.", font=FONT_TEXT, text_color=TEXT_MUTED).pack(pady=40)
             self.btn_load_more.configure(state="disabled")
             return
 
@@ -1027,111 +1439,72 @@ class PhoneBackupPro(ctk.CTk):
         end = min(start + MAX_THUMBNAILS_PER_BATCH, len(self.filtered_items))
         batch = self.filtered_items[start:end]
 
-        columns = 5
-        for i in range(columns):
+        cols = 5
+        for i in range(cols):
             self.gallery_scroll.grid_columnconfigure(i, weight=1)
 
         for idx, item in enumerate(batch, start=start):
-            r = idx // columns
-            c = idx % columns
-            self.create_media_card(item, r, c)
+            r = idx // cols
+            c = idx % cols
+            self.create_thumb_card(item, r, c)
 
         self.gallery_offset = end
-        if self.gallery_offset < len(self.filtered_items) and not self.is_busy:
+        if self.gallery_offset < len(self.filtered_items):
             self.btn_load_more.configure(state="normal")
         else:
             self.btn_load_more.configure(state="disabled")
 
-        # Load thumbnails in the background so the interface stays responsive.
-        threading.Thread(target=self.load_thumbnails_worker, args=(batch,), daemon=True).start()
+        threading.Thread(target=self.load_thumbs_batch, args=(batch,), daemon=True).start()
 
     def load_more_gallery(self):
-        self.render_gallery(reset=False)
+        self.render_gallery_cards(reset=False)
 
-    def create_media_card(self, item: MediaItem, row: int, col: int):
-        card = ctk.CTkFrame(self.gallery_scroll, fg_color=PANEL_2, corner_radius=8, width=150, height=178)
-        card.grid(row=row, column=col, padx=8, pady=8, sticky="n")
+    def create_thumb_card(self, item: MediaItem, row: int, col: int):
+        card = ctk.CTkFrame(self.gallery_scroll, fg_color=CARD_BG, corner_radius=8, width=130, height=160)
+        card.grid(row=row, column=col, padx=6, pady=6, sticky="n")
         card.grid_propagate(False)
 
-        preview = ctk.CTkLabel(card, text="VIDEO" if item.kind == "video" else "PHOTO", font=FONT_SUB, text_color=MUTED, width=126, height=112, fg_color=BG, corner_radius=8)
-        preview.pack(padx=8, pady=(8, 5))
-        preview.remote_path = item.remote_path  # dynamic reference
-        preview.bind("<Button-1>", lambda _e, it=item: self.select_media_item(it))
+        # Önizleme Görseli
+        thumb_lbl = ctk.CTkLabel(card, text="VIDEO" if item.kind == "video" else "PHOTO", font=FONT_SMALL, text_color=TEXT_MUTED, width=118, height=110, fg_color=BG_DARK, corner_radius=6)
+        thumb_lbl.pack(padx=6, pady=(6, 4))
 
-        name = self.truncate_middle(item.file_name, 24)
-        name_button = ctk.CTkButton(
-            card,
-            text=name,
-            height=24,
-            fg_color="transparent",
-            hover_color=BG,
-            text_color=TEXT,
-            font=FONT_SMALL,
-            command=lambda it=item: self.select_media_item(it),
-        )
-        name_button.pack(fill="x", padx=6)
+        # Checkbox & Durum
+        bot_box = ctk.CTkFrame(card, fg_color="transparent")
+        bot_box.pack(fill="x", padx=6)
 
-        state = "On Disk" if item.exists_locally else "New"
-        state_color = MUTED if item.exists_locally else OK
-        ctk.CTkLabel(card, text=f"{state} | {self.truncate_middle(item.folder, 18)}", font=FONT_SMALL, text_color=state_color).pack(padx=6, pady=(0, 6))
+        is_new = not item.exists_locally
+        status_text = t("new_label") if is_new else t("on_disk_label")
+        status_color = OK_GREEN if is_new else TEXT_MUTED
 
-        item._preview_widget = preview  # Practical reference to the tkinter widget.
+        ctk.CTkLabel(bot_box, text=status_text, font=FONT_SMALL, text_color=status_color).pack(side="left")
 
-    def select_media_item(self, item: MediaItem):
-        state = "Already on disk" if item.exists_locally else "New file"
-        size_text = f"{item.size:,} bytes" if item.size else "Size unavailable"
-        self.preview_meta_label.configure(
-            text=f"{item.file_name}\n{item.folder}\n{state} | {size_text}",
-            text_color=TEXT,
-        )
+        # Dosya adı
+        name_short = item.file_name if len(item.file_name) <= 14 else item.file_name[:11] + "..."
+        ctk.CTkLabel(card, text=name_short, font=FONT_SMALL, text_color=TEXT_WHITE).pack(anchor="w", padx=6)
 
-        if item.kind != "image":
-            self.preview_photo_ref = None
-            self.preview_image_label.configure(image=None, text="Video preview is not available here.")
-            return
+        item._thumb_widget = thumb_lbl
 
-        self.preview_image_label.configure(image=None, text="Loading preview...")
-        threading.Thread(target=self.load_inline_preview_worker, args=(item,), daemon=True).start()
-
-    def load_inline_preview_worker(self, item: MediaItem):
-        try:
-            local = self.ensure_preview_file(item)
-            if not local:
-                raise RuntimeError("The photo could not be pulled from the phone.")
-
-            image = Image.open(local)
-            image.thumbnail((180, 96))
-            self.after(0, lambda img=image.copy(): self.show_inline_preview(img))
-        except Exception as e:
-            self.after(0, lambda err=e: self.preview_image_label.configure(image=None, text=f"Preview failed:\n{err}"))
-
-    def show_inline_preview(self, image):
-        photo = ImageTk.PhotoImage(image)
-        self.preview_photo_ref = photo
-        self.preview_image_label.configure(image=photo, text="")
-
-    def load_thumbnails_worker(self, items: list[MediaItem]):
-        for item in items:
-            if item.kind != "image":
+    def load_thumbs_batch(self, batch: list[MediaItem]):
+        for it in batch:
+            if it.kind != "image":
                 continue
             try:
-                local = self.ensure_preview_file(item)
-                if not local or not local.exists():
+                local_path = self.get_preview_file(it)
+                if not local_path or not local_path.exists():
                     continue
 
-                image = Image.open(local)
-                image.thumbnail(THUMB_SIZE)
-                photo = ImageTk.PhotoImage(image)
+                img = Image.open(local_path)
+                img.thumbnail(THUMB_SIZE)
+                photo = ImageTk.PhotoImage(img)
 
-                self.thumb_refs[item.remote_path] = photo
-                widget = getattr(item, "_preview_widget", None)
+                self.thumb_refs[it.remote_path] = photo
+                widget = getattr(it, "_thumb_widget", None)
                 if widget:
                     self.after(0, lambda w=widget, p=photo: w.configure(image=p, text=""))
             except Exception:
-                # If Pillow cannot open a format such as HEIC, keep the item visible.
                 continue
 
-    def ensure_preview_file(self, item: MediaItem) -> Path | None:
+    def get_preview_file(self, item: MediaItem) -> Path | None:
         if item.remote_path in self.thumb_cache:
             return self.thumb_cache[item.remote_path]
 
@@ -1149,585 +1522,455 @@ class PhoneBackupPro(ctk.CTk):
                 return local
             return None
 
-        # Pull only the selected preview file into a temporary folder.
-        result = self.run_adb(["pull", item.remote_path, str(local)], timeout=40)
-        if result.returncode == 0 and local.exists() and local.stat().st_size > 0:
+        # Android ADB
+        res = self.run_adb(["pull", item.remote_path, str(local)], timeout=40)
+        if res.returncode == 0 and local.exists() and local.stat().st_size > 0:
             self.thumb_cache[item.remote_path] = local
             return local
 
         return None
 
-    # ---------------- Backup ----------------
+    # ============================================================
+    #  Yedekleme Mantığı (Backup Operations)
+    # ============================================================
 
-    def go_backup(self):
-        self.tabs.set("2  Backup")
-
-    def selected_files_for_backup(self) -> list[MediaItem]:
-        selected: list[MediaItem] = []
-        for folder, files in self.sync_plan.items():
-            var = self.folder_vars.get(folder)
-            if var and var.get():
-                selected.extend(files)
-        return selected
-
-    def trigger_backup(self):
-        if self.is_busy:
-            return
+    def go_to_backup_step(self):
         target = self.target_path.get().strip()
         if not target:
-            messagebox.showwarning("Missing Information", "Choose a backup folder.")
+            messagebox.showwarning("Hedef Seçilmedi", t("card_target_folder_sub"))
+            self.select_target_disk()
+            target = self.target_path.get().strip()
+            if not target:
+                return
+
+        new_items = [it for it in self.media_items if not it.exists_locally]
+        if not new_items:
+            messagebox.showinfo("Yedeklenecek Yeni Dosya Yok", "Tüm fotoğraflarınız zaten yerel diskinizde mevcut!")
             return
 
-        files = self.selected_files_for_backup()
-        if not files:
-            messagebox.showinfo("No Selection", "No new files are selected for backup.")
+        self.show_step(2)
+        self.start_backup_process(new_items, target)
+
+    def start_backup_process(self, items: list[MediaItem], target: str):
+        if self.is_busy:
             return
 
-        self.lock_ui("backup copy", risky=True)
+        self.is_busy = True
         self.stop_requested = False
-        self.btn_stop.configure(state="normal")
-        self.progress.set(0)
-        self.set_status("Backing up...", ACCENT_2)
-        threading.Thread(target=self.backup_worker, args=(target, files), daemon=True).start()
+        self.pause_requested = False
 
-    def request_stop(self):
+        self.dst_name_lbl.configure(text=target)
+        self.src_name_lbl.configure(text=self.connected_device_info or "Telefon")
+        self.backup_progress_bar.set(0)
+        self.backup_pct_label.configure(text="%0")
+        self.backup_status_text.configure(text=t("backup_progress_text", copied=0, total=len(items)))
+
+        threading.Thread(target=self.backup_worker_task, args=(items, target), daemon=True).start()
+
+    def toggle_pause_backup(self):
+        self.pause_requested = not self.pause_requested
+        if self.pause_requested:
+            self.btn_pause.configure(text=f"▶ {t('btn_resume')}")
+            self.backup_status_text.configure(text="Yedekleme duraklatıldı.")
+        else:
+            self.btn_pause.configure(text=f"⏸ {t('btn_pause')}")
+            self.backup_status_text.configure(text="Yedekleme devam ediyor...")
+
+    def stop_backup_action(self):
         self.stop_requested = True
         self.btn_stop.configure(state="disabled")
-        self.backup_status.configure(text="Safe stop requested. The current file will finish first...", text_color=ACCENT)
+        self.backup_status_text.configure(text=t("backup_stopped"))
 
-    def backup_worker(self, target: str, files: list[MediaItem]):
+    def backup_worker_task(self, items: list[MediaItem], target: str):
+        target_path = Path(target)
+        total = len(items)
         copied = 0
         failed = 0
-        failed_files: list[tuple[str, str, str]] = []  # (name, remote, error)
-        total = len(files)
-        progress_lock = threading.Lock()
-        completed_count = 0
-        target_path = Path(target)
+        failed_files = []
 
-        def worker_task(item: MediaItem):
-            nonlocal copied, failed, completed_count
+        start_time = time.time()
+
+        for idx, item in enumerate(items, start=1):
             if self.stop_requested:
-                return
+                break
 
-            local_path = to_windows_safe_path(target_path / item.rel_path)
-            try:
-                local_path.parent.mkdir(parents=True, exist_ok=True)
-            except Exception as e:
-                with progress_lock:
-                    failed += 1
-                    failed_files.append((item.file_name, item.remote_path, f"Klasör oluşturma hatası: {e}"))
-                    completed_count += 1
-                    p = completed_count / total
-                    self.after(0, lambda c=completed_count, t=total, n=item.file_name: self.backup_status.configure(text=f"Yedekleniyor {c}/{t}: {n}", text_color=TEXT))
-                    self.after(0, lambda p=p: self.progress.set(p))
-                return
-
-            if item.remote_path.startswith("ios://"):
-                success, err_msg = ios_manager.copy_ios_file(item.path_parts or [], local_path, timeout=180)
-            else:
-                result = self.run_adb(["pull", item.remote_path, str(local_path)], timeout=180)
-                success = result.returncode == 0 and local_path.exists() and local_path.stat().st_size > 0
-                err_msg = (result.stderr or result.stdout or "Bilinmeyen hata").strip()
-
-            with progress_lock:
-                completed_count += 1
-                if success:
-                    copied += 1
-                else:
-                    failed += 1
-                    failed_files.append((item.file_name, item.remote_path, err_msg))
-                    self.after(0, lambda n=item.file_name: self.backup_status.configure(text=f"Kopyalanamadı: {n}", text_color=DANGER))
-
-                p = completed_count / total
-                self.after(0, lambda c=completed_count, t=total, n=item.file_name: self.backup_status.configure(text=f"Yedekleniyor {c}/{t}: {n}", text_color=TEXT))
-                self.after(0, lambda p=p: self.progress.set(p))
-
-        with ThreadPoolExecutor(max_workers=MAX_BACKUP_WORKERS) as executor:
-            for item in files:
+            while self.pause_requested:
+                time.sleep(0.3)
                 if self.stop_requested:
                     break
-                executor.submit(worker_task, item)
 
-        # Write error log to target disk if there are any failures
-        if failed_files:
+            local_file = to_windows_safe_path(target_path / item.rel_path)
+            local_file.parent.mkdir(parents=True, exist_ok=True)
+
+            # Arayüzü anlık güncelle
+            self.after(0, lambda n=item.file_name, s=format_size(item.size): (
+                self.cur_file_name.configure(text=n),
+                self.cur_file_size.configure(text=s)
+            ))
+
+            if item.remote_path.startswith("ios://"):
+                success, err = ios_manager.copy_ios_file(item.path_parts or [], local_file, timeout=180)
+            else:
+                res = self.run_adb(["pull", item.remote_path, str(local_file)], timeout=180)
+                success = (res.returncode == 0 and local_file.exists() and local_file.stat().st_size > 0)
+                err = res.stderr or "Hata"
+
+            if success:
+                copied += 1
+                item.exists_locally = True
+            else:
+                failed += 1
+                failed_files.append((item.file_name, err))
+
+            pct = copied / total
+            elapsed = time.time() - start_time
+            if copied > 0:
+                speed = copied / elapsed
+                rem_seconds = int((total - copied) / speed)
+                rem_str = f"~{rem_seconds // 60} dk {rem_seconds % 60} sn"
+            else:
+                rem_str = "..."
+
+            self.after(0, lambda p=pct, c=copied, t_cnt=total, rem=rem_str: (
+                self.backup_progress_bar.set(p),
+                self.backup_pct_label.configure(text=f"%{int(p * 100)}"),
+                self.backup_status_text.configure(text=t("backup_progress_text", copied=c, total=t_cnt)),
+                self.lbl_time_remaining.configure(text=t("time_remaining", time=rem)),
+            ))
+
+        self.is_busy = False
+        self.after(0, lambda: self.backup_completed_ui(copied, failed, failed_files))
+
+    def backup_completed_ui(self, copied: int, failed: int, failed_files: list):
+        self.btn_stop.configure(state="normal")
+        self.backup_progress_bar.set(1)
+        self.backup_pct_label.configure(text="%100")
+        self.backup_status_text.configure(text=t("backup_completed"))
+        self.lbl_time_remaining.configure(text=f"Başarılı: {copied}  |  Hatalı: {failed}")
+
+        messagebox.showinfo("Yedekleme", f"Yedekleme işlemi tamamlandı!\n\nKopyalanan: {copied}\nBaşarısız: {failed}")
+
+    # ============================================================
+    #  ADIM 3: Tekrar Eden Dosyalar (Duplicate Cleaner)
+    # ============================================================
+
+    def trigger_duplicate_scan(self):
+        target = self.target_path.get().strip()
+        if not target or not os.path.exists(target):
+            messagebox.showwarning("Hedef Bulunamadı", "Lütfen önce geçerli bir disk klasörü seçin.")
+            return
+
+        for child in self.dup_scroll.winfo_children():
+            child.destroy()
+        self.btn_rescan_dup.configure(state="disabled")
+        threading.Thread(target=self.duplicate_scan_worker, args=(target,), daemon=True).start()
+
+    def duplicate_scan_worker(self, target: str):
+        target_path = Path(target)
+        groups: dict[tuple[str, int], list[Path]] = {}
+        total_files = 0
+        total_bytes = 0
+
+        for root, _dirs, files in os.walk(target_path):
+            for f in files:
+                full = Path(root) / f
+                try:
+                    sz = full.stat().st_size
+                    if sz > 0:
+                        groups.setdefault((f.lower(), sz), []).append(full)
+                        total_files += 1
+                        total_bytes += sz
+                except OSError:
+                    continue
+
+        duplicates_found = []
+        recoverable_bytes = 0
+
+        for (name, sz), paths in groups.items():
+            if len(paths) > 1:
+                # 1. dosya orijinal kabul edilir, diğerleri tekrar
+                recoverable_bytes += sz * (len(paths) - 1)
+                duplicates_found.append((name, sz, paths[0], paths[1:]))
+
+        unique_count = total_files - sum(len(dup[3]) for dup in duplicates_found)
+
+        self.after(0, lambda: self.render_duplicates_ui(duplicates_found, recoverable_bytes, unique_count, total_files))
+
+    def render_duplicates_ui(self, duplicates: list, rec_bytes: int, unique_cnt: int, total_cnt: int):
+        self.btn_rescan_dup.configure(state="normal")
+        self.tile_dup_cnt_val.configure(text=str(len(duplicates)))
+        self.tile_dup_spc_val.configure(text=format_size(rec_bytes))
+        self.tile_dup_unq_val.configure(text=f"{unique_cnt:,}")
+        self.tile_dup_tot_val.configure(text=f"{total_cnt:,}")
+
+        self.dup_delete_candidates = []
+        for name, sz, orig_p, dup_paths in duplicates:
+            card = ctk.CTkFrame(self.dup_scroll, fg_color=CARD_BG_2, corner_radius=8, border_width=1, border_color=CARD_BORDER)
+            card.pack(fill="x", padx=6, pady=4)
+
+            top_row = ctk.CTkFrame(card, fg_color="transparent")
+            top_row.pack(fill="x", padx=10, pady=(6, 2))
+
+            ctk.CTkLabel(top_row, text=f"📄 {name}", font=FONT_SUB, text_color=TEXT_WHITE).pack(side="left")
+            ctk.CTkLabel(top_row, text=format_size(sz), font=FONT_SMALL, text_color=TEXT_MUTED).pack(side="right")
+
+            # Orijinal satırı
+            orig_row = ctk.CTkFrame(card, fg_color="transparent")
+            orig_row.pack(fill="x", padx=10, pady=2)
+            ctk.CTkLabel(orig_row, text=t("tag_original"), font=FONT_SMALL, text_color=OK_GREEN, fg_color=BG_DARK, corner_radius=4, width=54).pack(side="left", padx=(0, 8))
+            ctk.CTkLabel(orig_row, text=str(orig_p), font=FONT_SMALL, text_color=TEXT_MUTED).pack(side="left")
+
+            # Tekrar eden satırlar
+            for d_p in dup_paths:
+                dup_row = ctk.CTkFrame(card, fg_color="transparent")
+                dup_row.pack(fill="x", padx=10, pady=2)
+                ctk.CTkLabel(dup_row, text=t("tag_duplicate"), font=FONT_SMALL, text_color=DANGER_RED, fg_color=BG_DARK, corner_radius=4, width=54).pack(side="left", padx=(0, 8))
+                ctk.CTkLabel(dup_row, text=str(d_p), font=FONT_SMALL, text_color=TEXT_WHITE).pack(side="left")
+                self.dup_delete_candidates.append(d_p)
+
+        self.lbl_dup_selection_info.configure(text=t("dup_selected_info", count=len(self.dup_delete_candidates), size=format_size(rec_bytes)))
+
+    def delete_selected_duplicates(self):
+        if not getattr(self, "dup_delete_candidates", None):
+            messagebox.showinfo("Seçim Yok", "Silinecek tekrar eden dosya bulunamadı.")
+            return
+
+        cnt = len(self.dup_delete_candidates)
+        if not messagebox.askyesno("Onay", f"{cnt} adet mükerrer dosya diskten silinecektir.\n\nDevam etmek istiyor musunuz?"):
+            return
+
+        deleted = 0
+        for p in self.dup_delete_candidates:
             try:
-                log_file = target_path / "backup_errors.log"
-                with open(log_file, "w", encoding="utf-8") as f:
-                    f.write(f"PhotoMatch Yedekleme Hata Raporu - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-                    f.write(f"Toplam Başarısız: {len(failed_files)} / {total}\n")
-                    f.write("=" * 60 + "\n\n")
-                    for name, remote, err in failed_files:
-                        f.write(f"Dosya:  {name}\n")
-                        f.write(f"Kaynak: {remote}\n")
-                        f.write(f"Hata:   {err}\n")
-                        f.write("-" * 40 + "\n")
+                p.unlink()
+                deleted += 1
             except Exception:
                 pass
 
-        log_file_path = str(target_path / "backup_errors.log") if failed_files else None
-        failed_names = [f[0] for f in failed_files]
-        self.after(0, lambda: self.backup_finished(copied, failed, self.stop_requested, failed_names, log_file_path))
+        messagebox.showinfo("Temizlik", f"{deleted} adet mükerrer dosya başarıyla silindi.")
+        self.trigger_duplicate_scan()
 
-    def backup_finished(self, copied: int, failed: int, stopped: bool, failed_files: list[str], log_file_path: str | None = None):
-        self.btn_stop.configure(state="disabled")
-        self.unlock_ui()
-
-        if stopped:
-            self.backup_status.configure(text=f"Yedekleme durduruldu. Kopyalanan: {copied}, Başarısız: {failed}", text_color=ACCENT)
-            self.set_status("Stopped", ACCENT_2)
-        else:
-            self.backup_status.configure(text=f"Yedekleme tamamlandı. Kopyalanan: {copied}, Başarısız: {failed}", text_color=OK if failed == 0 else ACCENT)
-            self.set_status("Backup complete", OK)
-
-        if failed_files:
-            shown = "\n".join(failed_files[:8])
-            extra = "" if len(failed_files) <= 8 else f"\n...ve {len(failed_files) - 8} dosya daha"
-            log_hint = f"\n\nAyrıntılı hata günlüğü:\n{log_file_path}\n\nHata raporunu şimdi açmak ister misiniz?" if log_file_path else ""
-            if log_file_path and messagebox.askyesno("Yedekleme Uyarısı", f"Bazı dosyalar kopyalanamadı:\n\n{shown}{extra}{log_hint}"):
-                try:
-                    os.startfile(log_file_path)
-                except Exception:
-                    pass
-            elif not log_file_path:
-                messagebox.showwarning("Yedekleme Uyarısı", f"Bazı dosyalar kopyalanamadı:\n\n{shown}{extra}")
-
-    # ---------------- Clean duplicates ----------------
-
-    def trigger_clean(self):
-        if self.is_busy:
-            return
-        target = self.target_path.get().strip()
-        if not target:
-            messagebox.showwarning("Missing Information", "Choose the target disk folder first.")
-            return
-
-        if not messagebox.askyesno("Confirm", "The target disk will be scanned for duplicates with the same relative path and file size. Delete the duplicates that are found?"):
-            return
-
-        self.lock_ui("disk duplicate cleanup", risky=True)
-        self.clean_progress.set(0)
-        self.clean_status.configure(text="Scanning target disk...", text_color=TEXT)
-        self.set_status("Cleaning...", ACCENT_2)
-        threading.Thread(target=self.clean_worker, args=(target,), daemon=True).start()
-
-    def clean_worker(self, target: str):
-        try:
-            target_path = Path(target)
-            groups: dict[tuple[str, int], list[Path]] = {}
-
-            all_files = []
-            for root, _dirs, files in os.walk(target_path):
-                for name in files:
-                    all_files.append(Path(root) / name)
-
-            total = max(len(all_files), 1)
-            for idx, full in enumerate(all_files, start=1):
-                try:
-                    size = full.stat().st_size
-                    if size > 0:
-                        groups.setdefault((full.name.lower(), size), []).append(full)
-                except OSError:
-                    continue
-                if idx % 50 == 0:
-                    self.after(0, lambda p=idx / total: self.clean_progress.set(p))
-
-            duplicates = [paths for paths in groups.values() if len(paths) > 1]
-            deleted = 0
-
-            for paths in duplicates:
-                paths.sort(key=lambda p: p.stat().st_mtime)
-                for duplicate in paths[1:]:
-                    try:
-                        duplicate.unlink()
-                        deleted += 1
-                    except OSError:
-                        pass
-
-            self.after(0, lambda: self.clean_finished(len(duplicates), deleted))
-        except Exception as e:
-            self.after(0, lambda: self.clean_error(str(e)))
-
-    def clean_finished(self, groups: int, deleted: int):
-        self.clean_progress.set(1)
-        self.clean_status.configure(text=f"Cleanup finished. Groups: {groups}, Deleted duplicates: {deleted}", text_color=OK)
-        self.set_status("Cleanup complete", OK)
-        self.unlock_ui()
-        messagebox.showinfo("Cleanup Report", f"Duplicate groups: {groups}\nDeleted files: {deleted}")
-
-    def clean_error(self, error: str):
-        self.clean_status.configure(text=f"Cleanup error: {error}", text_color=DANGER)
-        self.set_status("Error", DANGER)
-        self.unlock_ui()
-
-    # ---------------- Phone cleanup ----------------
-
-    def parse_cutoff_timestamp(self) -> float | None:
-        try:
-            cutoff_day = datetime.strptime(self.selected_cleanup_date_text(), "%Y-%m-%d")
-        except ValueError:
-            return None
-        return (cutoff_day + timedelta(days=1)).timestamp()
+    # ============================================================
+    #  ADIM 4: Telefondan Temizleme (Phone Cleanup)
+    # ============================================================
 
     def trigger_phone_cleanup_scan(self):
-        if self.is_busy:
+        cutoff_date = f"{self.cleanup_year.get()}-{self.cleanup_month.get()}-{self.cleanup_day.get()}"
+        try:
+            cutoff_dt = datetime.strptime(cutoff_date, "%Y-%m-%d")
+            cutoff_ts = cutoff_dt.timestamp()
+        except ValueError:
+            messagebox.showerror("Hata", "Geçersiz tarih formatı.")
             return
 
-        cutoff_ts = self.parse_cutoff_timestamp()
-        source = self.source_path.get().strip().rstrip("/")
         target = self.target_path.get().strip()
-
-        if cutoff_ts is None:
-            messagebox.showwarning("Invalid Date", "Choose a valid cutoff date.")
-            return
-        if not source:
-            messagebox.showwarning("Missing Information", "Phone folder cannot be empty. Example: /sdcard")
-            return
-        if not target:
-            messagebox.showwarning("Missing Information", "Choose the disk backup folder first.")
+        if not target or not os.path.exists(target):
+            messagebox.showwarning("Hedef Eksik", "Lütfen önce disk yedekleme klasörünü seçin.")
             return
 
         self.phone_cleanup_candidates.clear()
-        self.btn_delete_phone_cleanup.configure(state="disabled")
-        self.phone_cleanup_progress.set(0)
-        for child in self.phone_cleanup_list.winfo_children():
-            child.destroy()
+        self.btn_start_clean.configure(state="disabled")
+        threading.Thread(target=self.phone_clean_scan_worker, args=(target, cutoff_ts), daemon=True).start()
 
-        self.lock_ui("phone cleanup scan", risky=False)
-        self.set_status("Checking phone cleanup...", ACCENT_2)
-        self.phone_cleanup_status.configure(text="Indexing disk backup...", text_color=TEXT)
-        threading.Thread(target=self.phone_cleanup_scan_worker, args=(source, target, cutoff_ts), daemon=True).start()
+    def phone_clean_scan_worker(self, target: str, cutoff_ts: float):
+        existing = self.cached_local_index(target)
+        candidates = []
 
-    def phone_cleanup_scan_worker(self, source: str, target: str, cutoff_ts: float):
-        try:
-            existing = self.cached_local_index(target)
-            if self.is_ios_mode():
-                self.after(0, lambda: self.phone_cleanup_status.configure(text="Reading iPhone media dates...", text_color=TEXT))
-                if not self.media_items:
-                    devices = ios_manager.list_ios_devices()
-                    dev_name = devices[0] if devices else ""
-                    raw = ios_manager.scan_ios_media(device_name=dev_name)
-                    rows = [(r["remote_path"], r["modify_ts"]) for r in raw]
-                    ios_item_map = {r["remote_path"]: r for r in raw}
-                else:
-                    rows = [(it.remote_path, it.cleanup_ts) for it in self.media_items]
-                    ios_item_map = {it.remote_path: it for it in self.media_items}
-            else:
-                self.after(0, lambda: self.phone_cleanup_status.configure(text="Reading phone media dates from MediaStore...", text_color=TEXT))
-                rows = self.query_phone_cleanup_rows(source)
-                has_dates = any(ts is not None for path, ts in rows if path.lower().endswith(MEDIA_EXTS))
-                if not rows or not has_dates:
-                    self.after(0, lambda: self.phone_cleanup_status.configure(text="Reading media dates from Android file system...", text_color=TEXT))
-                    fallback_rows = self.query_phone_cleanup_rows_from_find(source)
-                    if fallback_rows:
-                        rows = fallback_rows
-                if not rows and self.media_items:
-                    rows = [(item.remote_path, None) for item in self.media_items]
-                ios_item_map = {}
+        for item in self.media_items:
+            if not item.exists_locally:
+                continue
 
-            total = max(len(rows), 1)
-            candidates: list[MediaItem] = []
-            media_seen = 0
-            backed_up_seen = 0
-            older_seen = 0
-            missing_date_seen = 0
-            filename_date_seen = 0
+            ts = item.cleanup_ts
+            if ts is None:
+                # İsimden tarih çıkarma denemesi
+                m = re.search(r"(20\d{2})[-_.]?([01]\d)[-_.]?([0-3]\d)", item.file_name)
+                if m:
+                    try:
+                        ts = datetime(int(m.group(1)), int(m.group(2)), int(m.group(3))).timestamp()
+                    except Exception:
+                        pass
 
-            for idx, (remote_path, modified_ts) in enumerate(rows, start=1):
-                lower = remote_path.lower()
-                if not lower.endswith(MEDIA_EXTS):
-                    continue
-                media_seen += 1
-
-                rel = self.normalize_remote_path(remote_path, source)
-                safe_rel = sanitize_rel_path(rel)
-                safe_rel_lower = safe_rel.lower()
-                name = remote_path.split("/")[-1]
-
-                # Verify that file exists on local backup disk
-                name_lower = name.lower()
-                is_backed_up = False
-                if safe_rel_lower in existing["path_sizes"] and existing["path_sizes"][safe_rel_lower] > 0:
-                    is_backed_up = True
-                elif name_lower in existing.get("name_entries", {}):
-                    name_matches = existing["name_entries"][name_lower]
-                    for local_rel, local_size in name_matches:
-                        if local_size > 0:
-                            if safe_rel_lower.endswith(local_rel) or local_rel.endswith(name_lower):
-                                is_backed_up = True
-                                break
-
-                if not is_backed_up:
-                    continue
-                backed_up_seen += 1
-
-                if modified_ts is None:
-                    modified_ts = self.infer_timestamp_from_name_or_path(remote_path)
-                    if modified_ts is not None:
-                        filename_date_seen += 1
-                    else:
-                        missing_date_seen += 1
-                        continue
-                if modified_ts >= cutoff_ts:
-                    continue
-                older_seen += 1
-
-                folder = os.path.dirname(safe_rel).replace("\\", "/") or "Root"
-                kind = "image" if lower.endswith(IMAGE_EXTS) else "video"
-                path_parts = None
-                if remote_path.startswith("ios://"):
-                    mapped = ios_item_map.get(remote_path)
-                    if mapped:
-                        path_parts = getattr(mapped, "path_parts", None) or (mapped.get("path_parts") if isinstance(mapped, dict) else None)
-
-                item = MediaItem(remote_path, safe_rel, name, folder, None, kind, True, path_parts=path_parts, cleanup_ts=modified_ts)
+            if ts and ts <= cutoff_ts:
                 candidates.append(item)
 
-                if idx % 50 == 0:
-                    self.after(0, lambda p=idx / total: self.phone_cleanup_progress.set(p))
-
-            stats = {
-                "media": media_seen,
-                "backed_up": backed_up_seen,
-                "older": older_seen,
-                "missing_date": missing_date_seen,
-                "filename_date": filename_date_seen,
-            }
-            self.after(0, lambda: self.phone_cleanup_scan_finished(candidates, stats))
-        except FileNotFoundError:
-            self.after(0, lambda: self.phone_cleanup_error("ADB was not found. Put adb_tools/adb.exe next to this app or add adb to PATH."))
-        except Exception as e:
-            self.after(0, lambda: self.phone_cleanup_error(f"Phone cleanup scan error:\n{e}"))
-
-    def query_phone_cleanup_rows(self, source: str) -> list[tuple[str, float | None]]:
-        # Query MediaStore with colon-separated projection format (adb shell content requirement)
-        cmd = ["shell", "content", "query", "--uri", "content://media/external/file", "--projection", "_data:date_modified:date_added"]
-        result = self.run_adb(cmd, timeout=60)
-        if result.returncode != 0 or not result.stdout.strip():
-            cmd = ["shell", "content", "query", "--uri", "content://media/external/file", "--projection", "_data:date_modified"]
-            result = self.run_adb(cmd, timeout=60)
-        if result.returncode != 0 or not result.stdout.strip():
-            return [(path, None) for path, _size in self.query_mediastore(source)]
-
-        search_filter = self.normalize_android_path(source).rstrip("/")
-        rows: list[tuple[str, float | None]] = []
-        for line in result.stdout.splitlines():
-            if "_data=" not in line:
-                continue
-            m = re.search(r"_data=(.+?)(?:,\s*date_modified=|, date_added=|$)", line)
-            if not m:
-                continue
-            path = m.group(1).strip()
-            norm_path = self.normalize_android_path(path)
-            if not norm_path.startswith(search_filter):
-                continue
-
-            modified_ts = None
-            modified_match = re.search(r"date_modified=(\d+)", line)
-            added_match = re.search(r"date_added=(\d+)", line)
-            date_match = modified_match or added_match
-            if date_match:
-                try:
-                    modified_ts = float(date_match.group(1))
-                except ValueError:
-                    modified_ts = None
-            rows.append((path, modified_ts))
-        return rows
-
-    def query_phone_cleanup_rows_from_find(self, source: str) -> list[tuple[str, float | None]]:
-        patterns = " -o ".join([f"-iname '*{ext}'" for ext in MEDIA_EXTS])
-        # Direct stat via find exec (printf is not supported by toybox find on Android)
-        cmd = f"find {shell_quote(source)} -type f \\( {patterns} \\) -exec stat -c '%Y|%n' {{}} + 2>/dev/null"
-        result = self.run_adb(["shell", cmd], timeout=120)
-        if result.returncode != 0 or not result.stdout.strip():
-            return []
-
-        rows: list[tuple[str, float | None]] = []
-        for line in result.stdout.splitlines():
-            if "|" not in line:
-                continue
-            ts_text, path = line.split("|", 1)
-            try:
-                modified_ts = float(ts_text)
-                if modified_ts > 100000000000:
-                    modified_ts = modified_ts / 1000
-            except ValueError:
-                modified_ts = None
-            if path:
-                rows.append((path.strip(), modified_ts))
-        return rows
-
-    def infer_timestamp_from_name_or_path(self, remote_path: str) -> float | None:
-        name = remote_path.split("/")[-1]
-        candidates = [
-            r"(20\d{2})[-_.]?([01]\d)[-_.]?([0-3]\d)",
-            r"([0-3]\d)[-_.]([01]\d)[-_.](20\d{2})",
-        ]
-
-        for pattern in candidates:
-            for match in re.finditer(pattern, name):
-                parts = match.groups()
-                if len(parts[0]) == 4:
-                    year, month, day = parts
-                else:
-                    day, month, year = parts
-                ts = self.date_parts_to_timestamp(year, month, day)
-                if ts is not None:
-                    return ts
-
-        epoch_match = re.search(r"(?<!\d)(1[5-9]\d{8}|2[0-2]\d{8})(?!\d)", name)
-        if epoch_match:
-            try:
-                return float(epoch_match.group(1))
-            except ValueError:
-                return None
-
-        epoch_ms_match = re.search(r"(?<!\d)(1[5-9]\d{11}|2[0-2]\d{11})(?!\d)", name)
-        if epoch_ms_match:
-            try:
-                return float(epoch_ms_match.group(1)) / 1000
-            except ValueError:
-                return None
-
-        return None
-
-    def date_parts_to_timestamp(self, year: str, month: str, day: str) -> float | None:
-        try:
-            parsed = datetime(int(year), int(month), int(day))
-        except ValueError:
-            return None
-        return parsed.timestamp()
-
-    def phone_cleanup_scan_finished(self, candidates: list[MediaItem], stats: dict[str, int] | None = None):
         self.phone_cleanup_candidates = candidates
-        self.phone_cleanup_progress.set(1)
-        for child in self.phone_cleanup_list.winfo_children():
-            child.destroy()
+        img_c = sum(1 for it in candidates if it.kind == "image")
+        vid_c = len(candidates) - img_c
 
-        if not candidates:
-            if stats:
-                self.phone_cleanup_status.configure(
-                    text=(
-                        "No deletable files matched. "
-                        f"Phone media: {stats['media']} | Backed up on disk: {stats['backed_up']} | "
-                        f"Older than cutoff: {stats['older']} | Filename dates: {stats.get('filename_date', 0)} | No date: {stats['missing_date']}"
-                    ),
-                    text_color=MUTED,
-                )
-            else:
-                self.phone_cleanup_status.configure(text="No backed-up phone media matched this cutoff date.", text_color=MUTED)
-            self.set_status("Phone cleanup ready", OK)
-            self.unlock_ui()
-            return
+        self.after(0, lambda: self.render_phone_clean_results(img_c, vid_c, len(candidates)))
 
-        images = sum(1 for item in candidates if item.kind == "image")
-        videos = len(candidates) - images
-        self.phone_cleanup_status.configure(text=f"Found {len(candidates)} deletable files: {images} photos, {videos} videos.", text_color=OK)
-
-        for item in candidates[:120]:
-            date_text = datetime.fromtimestamp(getattr(item, "cleanup_ts", 0)).strftime("%Y-%m-%d")
-            label = ctk.CTkLabel(
-                self.phone_cleanup_list,
-                text=f"{date_text} | {self.truncate_middle(item.rel_path, 88)}",
-                font=FONT_TEXT,
-                text_color=TEXT,
-                anchor="w",
-            )
-            label.pack(fill="x", padx=10, pady=3)
-
-        if len(candidates) > 120:
-            ctk.CTkLabel(
-                self.phone_cleanup_list,
-                text=f"...and {len(candidates) - 120} more files",
-                font=FONT_TEXT,
-                text_color=MUTED,
-            ).pack(anchor="w", padx=10, pady=8)
-
-        self.set_status("Phone cleanup ready", OK)
-        self.unlock_ui()
-        self.btn_delete_phone_cleanup.configure(state="normal")
+    def render_phone_clean_results(self, images: int, videos: int, total: int):
+        self.lbl_clean_summary.configure(text=f"{images} Fotoğraf  |  {videos} Video  |  Toplam: {total}")
+        if total > 0:
+            self.btn_start_clean.configure(state="normal")
+        else:
+            self.btn_start_clean.configure(state="disabled")
+            messagebox.showinfo("Bilgi", "Seçilen tarihe kadar yedeklenmiş silinebilecek medya bulunamadı.")
 
     def trigger_phone_cleanup_delete(self):
-        if self.is_busy:
-            return
         if not self.phone_cleanup_candidates:
-            messagebox.showinfo("No Files", "Find deletable files first.")
             return
 
-        count = len(self.phone_cleanup_candidates)
-        cutoff = self.selected_cleanup_date_text()
+        cnt = len(self.phone_cleanup_candidates)
         if not messagebox.askyesno(
-            "Confirm Phone Delete",
-            f"This will permanently delete {count} backed-up media files from your phone saved on or before {cutoff}.\n\nContinue?",
+            "Telefondan Silme Onayı",
+            f"DİKKAT: Bu işlem telefonunuzdaki {cnt} adet medyayı KALICI OLARAK SİLECEKTİR.\n\n"
+            "Bu dosyalar daha önce bilgisayarınıza yedeklenmiştir.\n\n"
+            "Silme işlemini başlatmak istiyor musunuz?"
         ):
             return
 
-        self.lock_ui("phone delete", risky=True)
-        self.stop_requested = False
-        self.phone_cleanup_progress.set(0)
-        self.set_status("Deleting from phone...", DANGER)
-        self.phone_cleanup_status.configure(text="Deleting selected phone files...", text_color=DANGER)
-        threading.Thread(target=self.phone_cleanup_delete_worker, args=(list(self.phone_cleanup_candidates),), daemon=True).start()
+        self.btn_start_clean.configure(state="disabled")
+        threading.Thread(target=self.phone_cleanup_delete_worker, daemon=True).start()
 
-    def phone_cleanup_delete_worker(self, candidates: list[MediaItem]):
+    def phone_cleanup_delete_worker(self):
         deleted = 0
-        failed: list[str] = []
-        total = max(len(candidates), 1)
+        failed = 0
 
-        for idx, item in enumerate(candidates, start=1):
-            if self.stop_requested:
-                break
-            if item.remote_path.startswith("ios://"):
-                success, _err = ios_manager.delete_ios_file(item.path_parts or [])
-                if success:
-                    deleted += 1
-                else:
-                    failed.append(item.file_name)
+        for it in self.phone_cleanup_candidates:
+            if it.remote_path.startswith("ios://"):
+                success, _err = ios_manager.delete_ios_file(it.path_parts or [])
             else:
-                result = self.run_adb(["shell", f"rm -f {shell_quote(item.remote_path)}"], timeout=30)
-                if result.returncode == 0:
-                    deleted += 1
-                else:
-                    failed.append(item.file_name)
-            self.after(0, lambda p=idx / total: self.phone_cleanup_progress.set(p))
+                res = self.run_adb(["shell", f"rm -f {shell_quote(it.remote_path)}"], timeout=30)
+                success = (res.returncode == 0)
 
-        self.after(0, lambda: self.phone_cleanup_delete_finished(deleted, failed))
+            if success:
+                deleted += 1
+            else:
+                failed += 1
 
-    def phone_cleanup_delete_finished(self, deleted: int, failed: list[str]):
+        self.after(0, lambda: self.phone_cleanup_done_ui(deleted, failed))
+
+    def phone_cleanup_done_ui(self, deleted: int, failed: int):
         self.phone_cleanup_candidates.clear()
-        self.btn_delete_phone_cleanup.configure(state="disabled")
-        self.unlock_ui()
-        self.set_status("Phone cleanup complete", OK if not failed else ACCENT)
-        self.phone_cleanup_status.configure(text=f"Deleted from phone: {deleted}. Failed: {len(failed)}.", text_color=OK if not failed else ACCENT)
-        if failed:
-            shown = "\n".join(failed[:8])
-            extra = "" if len(failed) <= 8 else f"\n...and {len(failed) - 8} more"
-            messagebox.showwarning("Phone Cleanup Warning", f"Some files could not be deleted:\n\n{shown}{extra}")
+        self.btn_start_clean.configure(state="disabled")
+        messagebox.showinfo("Silme Tamamlandı", f"Telefondan silinen dosya: {deleted}\nBaşarısız: {failed}")
 
-    def phone_cleanup_error(self, error: str):
-        self.phone_cleanup_status.configure(text=error, text_color=DANGER)
-        self.set_status("Error", DANGER)
-        self.unlock_ui()
+    # ============================================================
+    #  Yardımcı Yerel Dizin İndeksi & Android Tarama
+    # ============================================================
+
+    def cached_local_index(self, target: str) -> dict[str, any]:
+        norm = str(Path(target).resolve()).lower()
+        if self.disk_index_cache is not None and self.disk_index_target == norm:
+            return self.disk_index_cache
+
+        idx = {"path_sizes": {}, "paths": set(), "names": set(), "name_entries": {}}
+        t_path = Path(target)
+        if t_path.exists():
+            for root, _dirs, files in os.walk(t_path):
+                for name in files:
+                    try:
+                        full = Path(root) / name
+                        rel = full.relative_to(t_path).as_posix().lower()
+                        sz = full.stat().st_size
+                        idx["path_sizes"][rel] = sz
+                        idx["paths"].add(rel)
+                        n_lower = name.lower()
+                        idx["names"].add(n_lower)
+                        idx["name_entries"].setdefault(n_lower, []).append((rel, sz))
+                    except OSError:
+                        continue
+
+        self.disk_index_cache = idx
+        self.disk_index_target = norm
+        return idx
+
+    def get_phone_media_android(self, source: str, existing: dict[str, any]) -> list[MediaItem]:
+        # MediaStore sorgusu
+        cmd = ["shell", "content", "query", "--uri", "content://media/external/file", "--projection", "_data:_size"]
+        res = self.run_adb(cmd, timeout=45)
+        raw_rows = []
+
+        if res.returncode == 0 and res.stdout.strip():
+            for line in res.stdout.splitlines():
+                if "_data=" not in line:
+                    continue
+                m = re.search(r"_data=(.+?)(?:,\s*_size=|$)", line)
+                if m:
+                    p = m.group(1).strip()
+                    sz = None
+                    sm = re.search(r"_size=(\d+)", line)
+                    if sm:
+                        try:
+                            sz = int(sm.group(1))
+                        except Exception:
+                            pass
+                    raw_rows.append((p, sz))
+
+        # Fallback find
+        if not raw_rows:
+            patterns = " -o ".join([f"-iname '*{ext}'" for ext in MEDIA_EXTS])
+            cmd_f = f"find {shell_quote(source)} -type f \\( {patterns} \\) 2>/dev/null"
+            res_f = self.run_adb(["shell", cmd_f], timeout=90)
+            if res_f.returncode == 0 and res_f.stdout.strip():
+                for line in res_f.stdout.splitlines():
+                    if line.strip():
+                        raw_rows.append((line.strip(), None))
+
+        items: list[MediaItem] = []
+        seen = set()
+
+        for remote_p, sz in raw_rows:
+            lower = remote_p.lower()
+            if lower in seen or not lower.endswith(MEDIA_EXTS):
+                continue
+            seen.add(lower)
+
+            rel = re.sub(r"^/storage/emulated/0", "", remote_p)
+            rel = re.sub(r"^/sdcard", "", rel).lstrip("/")
+            safe_rel = sanitize_rel_path(rel)
+            name = remote_p.split("/")[-1]
+            folder = os.path.dirname(safe_rel).replace("\\", "/") or "Root"
+            kind = "image" if lower.endswith(IMAGE_EXTS) else "video"
+
+            safe_rel_lower = safe_rel.lower()
+            name_lower = name.lower()
+
+            exists = False
+            if safe_rel_lower in existing["path_sizes"]:
+                loc_sz = existing["path_sizes"][safe_rel_lower]
+                exists = (loc_sz == sz) if sz is not None else (loc_sz > 0)
+            elif name_lower in existing.get("name_entries", {}):
+                for local_rel, local_size in existing["name_entries"][name_lower]:
+                    if local_size <= 0:
+                        continue
+                    if sz is not None:
+                        if local_size == sz:
+                            exists = True
+                            break
+                    elif safe_rel_lower.endswith(local_rel) or local_rel.endswith(name_lower):
+                        exists = True
+                        break
+
+            items.append(MediaItem(
+                remote_path=remote_p,
+                rel_path=safe_rel,
+                file_name=name,
+                folder=folder,
+                size=sz,
+                kind=kind,
+                exists_locally=exists,
+            ))
+
+        return items
 
     def on_close(self):
-        if self.is_busy:
-            operation = self.active_operation or "current operation"
-            if self.active_operation_is_risky:
-                messagebox.showwarning(
-                    "Risky Operation Running",
-                    f"Cannot close while {operation} is running.\n\nPlease wait until it finishes to avoid interrupted copies or partial deletes.",
-                )
-            else:
-                messagebox.showwarning(
-                    "Operation Running",
-                    f"Please wait for {operation} to finish before closing the app.",
-                )
-            return
         try:
             shutil.rmtree(self.temp_dir, ignore_errors=True)
-        finally:
-            self.destroy()
+        except Exception:
+            pass
+        self.destroy()
+
+
+# ============================================================
+#  Giriş Noktası
+# ============================================================
+
+def main():
+    app = PhotoMatchApp()
+    app.mainloop()
 
 
 if __name__ == "__main__":
-    app = PhoneBackupPro()
-    app.mainloop()
+    main()
