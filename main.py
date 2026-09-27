@@ -5,6 +5,7 @@ import subprocess
 import tempfile
 import threading
 import calendar
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -95,6 +96,33 @@ class MediaItem:
     size: int | None
     kind: str
     exists_locally: bool = False
+
+
+MAX_BACKUP_WORKERS = 4
+
+
+def sanitize_windows_name(name: str) -> str:
+    cleaned = re.sub(r'[<>:"/\\|?*]', '_', name)
+    cleaned = cleaned.rstrip(' .')
+    stem = cleaned.split('.')[0].upper()
+    reserved = {"CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"}
+    if stem in reserved:
+        cleaned = f"_{cleaned}"
+    return cleaned or "unnamed"
+
+
+def sanitize_rel_path(rel_path: str) -> str:
+    parts = Path(rel_path.replace("\\", "/")).parts
+    clean_parts = [sanitize_windows_name(p) for p in parts if p and p != "."]
+    return "/".join(clean_parts)
+
+
+def to_windows_safe_path(p: Path) -> Path:
+    resolved = p.resolve()
+    path_str = str(resolved)
+    if os.name == "nt" and not path_str.startswith("\\\\?\\") and len(path_str) >= 240:
+        return Path(f"\\\\?\\{path_str}")
+    return resolved
 
 
 def creation_flags():
@@ -475,7 +503,7 @@ class PhoneBackupPro(ctk.CTk):
             capture_output=True,
             text=text,
             encoding="utf-8" if text else None,
-            errors="ignore" if text else None,
+            errors="replace" if text else None,
             timeout=timeout,
             creationflags=creation_flags(),
         )
@@ -518,23 +546,27 @@ class PhoneBackupPro(ctk.CTk):
         except Exception as e:
             messagebox.showerror("ADB Error", str(e))
 
+    def normalize_android_path(self, path: str) -> str:
+        p = path.strip().replace("\\", "/")
+        p = re.sub(r"^/storage/emulated/0", "/sdcard", p)
+        p = re.sub(r"^/storage/self/primary", "/sdcard", p)
+        p = re.sub(r"^/mnt/sdcard", "/sdcard", p)
+        return p
+
     def normalize_remote_path(self, remote_path: str, source: str) -> str:
-        remote_path = remote_path.strip()
-        source = source.rstrip("/")
-        prefixes = [
-            source + "/",
-            source.replace("/sdcard", "/storage/emulated/0").rstrip("/") + "/",
-            "/storage/emulated/0/",
-            "/sdcard/",
-        ]
-        for prefix in prefixes:
+        remote_norm = self.normalize_android_path(remote_path)
+        source_norm = self.normalize_android_path(source).rstrip("/") + "/"
+        if remote_norm.startswith(source_norm):
+            return remote_norm[len(source_norm):].lstrip("/")
+
+        for prefix in ["/sdcard/", "/storage/emulated/0/", "/storage/self/primary/", "/mnt/sdcard/"]:
             if remote_path.startswith(prefix):
                 return remote_path[len(prefix):].lstrip("/")
         return remote_path.split("/")[-1]
 
-    def local_index(self, target: str) -> dict[str, set[str]]:
+    def local_index(self, target: str) -> dict[str, any]:
         target_path = Path(target)
-        index = {"names": set(), "paths": set()}
+        index = {"path_sizes": {}, "paths": set(), "names": set(), "name_entries": {}}
         if not target_path.exists():
             return index
 
@@ -543,13 +575,17 @@ class PhoneBackupPro(ctk.CTk):
                 try:
                     full = Path(root) / name
                     rel = full.relative_to(target_path).as_posix().lower()
-                    index["names"].add(name.lower())
+                    size = full.stat().st_size
+                    index["path_sizes"][rel] = size
                     index["paths"].add(rel)
+                    name_lower = name.lower()
+                    index["names"].add(name_lower)
+                    index["name_entries"].setdefault(name_lower, []).append((rel, size))
                 except OSError:
-                    index["names"].add(name.lower())
+                    continue
         return index
 
-    def cached_local_index(self, target: str) -> dict[str, set[str]]:
+    def cached_local_index(self, target: str) -> dict[str, any]:
         normalized = str(Path(target).resolve()).lower()
         if self.disk_index_cache is not None and self.disk_index_target == normalized:
             return self.disk_index_cache
@@ -627,35 +663,65 @@ class PhoneBackupPro(ctk.CTk):
         except Exception as e:
             self.after(0, lambda: self.scan_failed(f"Scan error:\n{e}"))
 
-    def get_phone_media(self, source: str, existing: dict[str, set[str]]) -> list[MediaItem]:
-        # Try MediaStore first. It is faster on some Android versions.
-        rows = self.query_mediastore(source)
-        if not rows:
-            # Fall back to find if MediaStore has no permission/data.
-            rows = self.query_find(source)
+    def get_phone_media(self, source: str, existing: dict[str, any]) -> list[MediaItem]:
+        # Merge MediaStore and find results so no files are missed
+        mediastore_rows = self.query_mediastore(source)
+        find_rows = self.query_find(source)
+
+        merged_dict: dict[str, int | None] = {}
+        for path, size in mediastore_rows:
+            merged_dict[path] = size
+        for path, size in find_rows:
+            if path not in merged_dict or (size is not None and merged_dict[path] is None):
+                merged_dict[path] = size
 
         seen = set()
         items: list[MediaItem] = []
 
-        for remote_path, size in rows:
+        for remote_path, size in merged_dict.items():
             lower = remote_path.lower()
             if lower in seen or not lower.endswith(MEDIA_EXTS):
                 continue
             seen.add(lower)
 
             rel = self.normalize_remote_path(remote_path, source)
+            safe_rel = sanitize_rel_path(rel)
             name = remote_path.split("/")[-1]
-            folder = os.path.dirname(rel).replace("\\", "/") or "Root"
+            folder = os.path.dirname(safe_rel).replace("\\", "/") or "Root"
             kind = "image" if lower.endswith(IMAGE_EXTS) else "video"
 
-            if kind == "video":
-                exists = rel.lower() in existing["paths"]
-            else:
-                exists = rel.lower() in existing["paths"] or name.lower() in existing["names"]
+            safe_rel_lower = safe_rel.lower()
+            name_lower = name.lower()
+
+            exists = False
+            # 1. Exact path match
+            if safe_rel_lower in existing["path_sizes"]:
+                local_size = existing["path_sizes"][safe_rel_lower]
+                if size is not None:
+                    exists = (local_size == size)
+                else:
+                    exists = (local_size > 0)
+
+            # 2. Match across shifted/flattened folders (e.g. Camera/ or root instead of DCIM/Camera/)
+            if not exists and name_lower in existing.get("name_entries", {}):
+                name_matches = existing["name_entries"][name_lower]
+                for local_rel, local_size in name_matches:
+                    if local_size <= 0:
+                        continue
+                    if size is not None:
+                        # Exact size match on the same filename = identical file
+                        if local_size == size:
+                            exists = True
+                            break
+                    else:
+                        # Size not known: match if relative path aligns or is at root
+                        if safe_rel_lower.endswith(local_rel) or local_rel.endswith(name_lower):
+                            exists = True
+                            break
 
             items.append(MediaItem(
                 remote_path=remote_path,
-                rel_path=rel,
+                rel_path=safe_rel,
                 file_name=name,
                 folder=folder,
                 size=size,
@@ -667,30 +733,46 @@ class PhoneBackupPro(ctk.CTk):
         return items
 
     def query_mediastore(self, source: str) -> list[tuple[str, int | None]]:
-        projection = "_data"
-        cmd = ["shell", "content", "query", "--uri", "content://media/external/file", "--projection", projection]
+        # Query MediaStore with colon-separated projection format (adb shell content requirement)
+        cmd = ["shell", "content", "query", "--uri", "content://media/external/file", "--projection", "_data:_size"]
         result = self.run_adb(cmd, timeout=45)
+        if result.returncode != 0 or not result.stdout.strip():
+            cmd = ["shell", "content", "query", "--uri", "content://media/external/file", "--projection", "_data"]
+            result = self.run_adb(cmd, timeout=45)
         if result.returncode != 0 or not result.stdout.strip():
             return []
 
-        search_filter = source.replace("/sdcard", "/storage/emulated/0").rstrip("/")
+        search_filter = self.normalize_android_path(source).rstrip("/")
         rows: list[tuple[str, int | None]] = []
 
         for line in result.stdout.splitlines():
             if "_data=" not in line:
                 continue
-            path = line.split("_data=")[-1].strip()
-            if not path.startswith(search_filter):
+            m = re.search(r"_data=(.+?)(?:,\s*_size=|$)", line)
+            if not m:
                 continue
-            rows.append((path, None))
+            path = m.group(1).strip()
+
+            size = None
+            size_match = re.search(r"_size=(\d+)", line)
+            if size_match:
+                try:
+                    size = int(size_match.group(1))
+                except ValueError:
+                    pass
+
+            norm_path = self.normalize_android_path(path)
+            if not norm_path.startswith(search_filter):
+                continue
+            rows.append((path, size))
 
         return rows
 
     def query_find(self, source: str) -> list[tuple[str, int | None]]:
-        # Keep line-based output because it is easier to parse on Windows.
+        # Find files directly on the Android file system
         patterns = " -o ".join([f"-iname '*{ext}'" for ext in MEDIA_EXTS])
         cmd = f"find {shell_quote(source)} -type f \\( {patterns} \\) 2>/dev/null"
-        result = self.run_adb(["shell", cmd], timeout=75)
+        result = self.run_adb(["shell", cmd], timeout=90)
         if result.returncode != 0 and not result.stdout.strip():
             return []
         return [(line.strip(), None) for line in result.stdout.splitlines() if line.strip()]
@@ -985,47 +1067,95 @@ class PhoneBackupPro(ctk.CTk):
     def backup_worker(self, target: str, files: list[MediaItem]):
         copied = 0
         failed = 0
-        failed_files: list[str] = []
+        failed_files: list[tuple[str, str, str]] = []  # (name, remote, error)
         total = len(files)
+        progress_lock = threading.Lock()
+        completed_count = 0
+        target_path = Path(target)
 
-        for idx, item in enumerate(files, start=1):
+        def worker_task(item: MediaItem):
+            nonlocal copied, failed, completed_count
             if self.stop_requested:
-                break
+                return
 
-            local_path = Path(target) / item.rel_path
-            local_path.parent.mkdir(parents=True, exist_ok=True)
+            local_path = to_windows_safe_path(target_path / item.rel_path)
+            try:
+                local_path.parent.mkdir(parents=True, exist_ok=True)
+            except Exception as e:
+                with progress_lock:
+                    failed += 1
+                    failed_files.append((item.file_name, item.remote_path, f"Klasör oluşturma hatası: {e}"))
+                    completed_count += 1
+                    p = completed_count / total
+                    self.after(0, lambda c=completed_count, t=total, n=item.file_name: self.backup_status.configure(text=f"Yedekleniyor {c}/{t}: {n}", text_color=TEXT))
+                    self.after(0, lambda p=p: self.progress.set(p))
+                return
 
-            self.after(0, lambda i=idx, t=total, n=item.file_name: self.backup_status.configure(text=f"Copying {i}/{t}: {n}", text_color=TEXT))
+            result = self.run_adb(["pull", item.remote_path, str(local_path)], timeout=180)
+            success = result.returncode == 0 and local_path.exists() and local_path.stat().st_size > 0
 
-            result = self.run_adb(["pull", item.remote_path, str(local_path)], timeout=None)
-            copied_ok = result.returncode == 0 and local_path.exists()
+            with progress_lock:
+                completed_count += 1
+                if success:
+                    copied += 1
+                else:
+                    failed += 1
+                    err_msg = (result.stderr or result.stdout or "Bilinmeyen hata").strip()
+                    failed_files.append((item.file_name, item.remote_path, err_msg))
+                    self.after(0, lambda n=item.file_name: self.backup_status.configure(text=f"Kopyalanamadı: {n}", text_color=DANGER))
 
-            if copied_ok:
-                copied += 1
-            else:
-                failed += 1
-                failed_files.append(item.file_name)
-                self.after(0, lambda n=item.file_name: self.backup_status.configure(text=f"Failed to copy: {n}", text_color=DANGER))
+                p = completed_count / total
+                self.after(0, lambda c=completed_count, t=total, n=item.file_name: self.backup_status.configure(text=f"Yedekleniyor {c}/{t}: {n}", text_color=TEXT))
+                self.after(0, lambda p=p: self.progress.set(p))
 
-            self.after(0, lambda p=idx / total: self.progress.set(p))
+        with ThreadPoolExecutor(max_workers=MAX_BACKUP_WORKERS) as executor:
+            for item in files:
+                if self.stop_requested:
+                    break
+                executor.submit(worker_task, item)
 
-        self.after(0, lambda: self.backup_finished(copied, failed, self.stop_requested, failed_files))
+        # Write error log to target disk if there are any failures
+        if failed_files:
+            try:
+                log_file = target_path / "backup_errors.log"
+                with open(log_file, "w", encoding="utf-8") as f:
+                    f.write(f"PhotoMatch Yedekleme Hata Raporu - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                    f.write(f"Toplam Başarısız: {len(failed_files)} / {total}\n")
+                    f.write("=" * 60 + "\n\n")
+                    for name, remote, err in failed_files:
+                        f.write(f"Dosya:  {name}\n")
+                        f.write(f"Kaynak: {remote}\n")
+                        f.write(f"Hata:   {err}\n")
+                        f.write("-" * 40 + "\n")
+            except Exception:
+                pass
 
-    def backup_finished(self, copied: int, failed: int, stopped: bool, failed_files: list[str]):
+        log_file_path = str(target_path / "backup_errors.log") if failed_files else None
+        failed_names = [f[0] for f in failed_files]
+        self.after(0, lambda: self.backup_finished(copied, failed, self.stop_requested, failed_names, log_file_path))
+
+    def backup_finished(self, copied: int, failed: int, stopped: bool, failed_files: list[str], log_file_path: str | None = None):
         self.btn_stop.configure(state="disabled")
         self.unlock_ui()
 
         if stopped:
-            self.backup_status.configure(text=f"Backup stopped. Copied: {copied}, Failed: {failed}", text_color=ACCENT)
+            self.backup_status.configure(text=f"Yedekleme durduruldu. Kopyalanan: {copied}, Başarısız: {failed}", text_color=ACCENT)
             self.set_status("Stopped", ACCENT_2)
         else:
-            self.backup_status.configure(text=f"Backup finished. Copied: {copied}, Failed: {failed}", text_color=OK if failed == 0 else ACCENT)
+            self.backup_status.configure(text=f"Yedekleme tamamlandı. Kopyalanan: {copied}, Başarısız: {failed}", text_color=OK if failed == 0 else ACCENT)
             self.set_status("Backup complete", OK)
 
         if failed_files:
             shown = "\n".join(failed_files[:8])
-            extra = "" if len(failed_files) <= 8 else f"\n...and {len(failed_files) - 8} more"
-            messagebox.showwarning("Backup Warning", f"Some files could not be copied:\n\n{shown}{extra}")
+            extra = "" if len(failed_files) <= 8 else f"\n...ve {len(failed_files) - 8} dosya daha"
+            log_hint = f"\n\nAyrıntılı hata günlüğü:\n{log_file_path}\n\nHata raporunu şimdi açmak ister misiniz?" if log_file_path else ""
+            if log_file_path and messagebox.askyesno("Yedekleme Uyarısı", f"Bazı dosyalar kopyalanamadı:\n\n{shown}{extra}{log_hint}"):
+                try:
+                    os.startfile(log_file_path)
+                except Exception:
+                    pass
+            elif not log_file_path:
+                messagebox.showwarning("Yedekleme Uyarısı", f"Bazı dosyalar kopyalanamadı:\n\n{shown}{extra}")
 
     # ---------------- Clean duplicates ----------------
 
@@ -1059,9 +1189,9 @@ class PhoneBackupPro(ctk.CTk):
             total = max(len(all_files), 1)
             for idx, full in enumerate(all_files, start=1):
                 try:
-                    rel = full.relative_to(target_path).as_posix().lower()
                     size = full.stat().st_size
-                    groups.setdefault((rel, size), []).append(full)
+                    if size > 0:
+                        groups.setdefault((full.name.lower(), size), []).append(full)
                 except OSError:
                     continue
                 if idx % 50 == 0:
@@ -1138,8 +1268,9 @@ class PhoneBackupPro(ctk.CTk):
             existing = self.cached_local_index(target)
             self.after(0, lambda: self.phone_cleanup_status.configure(text="Reading phone media dates from MediaStore...", text_color=TEXT))
             rows = self.query_phone_cleanup_rows(source)
-            if not rows or all(modified_ts is None for _path, modified_ts in rows):
-                self.after(0, lambda: self.phone_cleanup_status.configure(text="MediaStore has no dates. Reading folder dates from Android file system...", text_color=TEXT))
+            has_dates = any(ts is not None for path, ts in rows if path.lower().endswith(MEDIA_EXTS))
+            if not rows or not has_dates:
+                self.after(0, lambda: self.phone_cleanup_status.configure(text="Reading media dates from Android file system...", text_color=TEXT))
                 fallback_rows = self.query_phone_cleanup_rows_from_find(source)
                 if fallback_rows:
                     rows = fallback_rows
@@ -1160,8 +1291,23 @@ class PhoneBackupPro(ctk.CTk):
                 media_seen += 1
 
                 rel = self.normalize_remote_path(remote_path, source)
+                safe_rel = sanitize_rel_path(rel)
+                safe_rel_lower = safe_rel.lower()
                 name = remote_path.split("/")[-1]
-                is_backed_up = rel.lower() in existing["paths"] or name.lower() in existing["names"]
+
+                # Verify that file exists on local backup disk
+                name_lower = name.lower()
+                is_backed_up = False
+                if safe_rel_lower in existing["path_sizes"] and existing["path_sizes"][safe_rel_lower] > 0:
+                    is_backed_up = True
+                elif name_lower in existing.get("name_entries", {}):
+                    name_matches = existing["name_entries"][name_lower]
+                    for local_rel, local_size in name_matches:
+                        if local_size > 0:
+                            if safe_rel_lower.endswith(local_rel) or local_rel.endswith(name_lower):
+                                is_backed_up = True
+                                break
+
                 if not is_backed_up:
                     continue
                 backed_up_seen += 1
@@ -1177,9 +1323,9 @@ class PhoneBackupPro(ctk.CTk):
                     continue
                 older_seen += 1
 
-                folder = os.path.dirname(rel).replace("\\", "/") or "Root"
+                folder = os.path.dirname(safe_rel).replace("\\", "/") or "Root"
                 kind = "image" if lower.endswith(IMAGE_EXTS) else "video"
-                item = MediaItem(remote_path, rel, name, folder, None, kind, True)
+                item = MediaItem(remote_path, safe_rel, name, folder, None, kind, True)
                 item.cleanup_ts = modified_ts
                 candidates.append(item)
 
@@ -1200,18 +1346,26 @@ class PhoneBackupPro(ctk.CTk):
             self.after(0, lambda: self.phone_cleanup_error(f"Phone cleanup scan error:\n{e}"))
 
     def query_phone_cleanup_rows(self, source: str) -> list[tuple[str, float | None]]:
-        cmd = ["shell", "content", "query", "--uri", "content://media/external/file", "--projection", "_data,date_modified,date_added"]
+        # Query MediaStore with colon-separated projection format (adb shell content requirement)
+        cmd = ["shell", "content", "query", "--uri", "content://media/external/file", "--projection", "_data:date_modified:date_added"]
         result = self.run_adb(cmd, timeout=60)
+        if result.returncode != 0 or not result.stdout.strip():
+            cmd = ["shell", "content", "query", "--uri", "content://media/external/file", "--projection", "_data:date_modified"]
+            result = self.run_adb(cmd, timeout=60)
         if result.returncode != 0 or not result.stdout.strip():
             return [(path, None) for path, _size in self.query_mediastore(source)]
 
-        search_filter = source.replace("/sdcard", "/storage/emulated/0").rstrip("/")
+        search_filter = self.normalize_android_path(source).rstrip("/")
         rows: list[tuple[str, float | None]] = []
         for line in result.stdout.splitlines():
             if "_data=" not in line:
                 continue
-            path = line.split("_data=")[-1].split(",")[0].strip()
-            if not path.startswith(search_filter):
+            m = re.search(r"_data=(.+?)(?:,\s*date_modified=|, date_added=|$)", line)
+            if not m:
+                continue
+            path = m.group(1).strip()
+            norm_path = self.normalize_android_path(path)
+            if not norm_path.startswith(search_filter):
                 continue
 
             modified_ts = None
@@ -1228,11 +1382,9 @@ class PhoneBackupPro(ctk.CTk):
 
     def query_phone_cleanup_rows_from_find(self, source: str) -> list[tuple[str, float | None]]:
         patterns = " -o ".join([f"-iname '*{ext}'" for ext in MEDIA_EXTS])
-        cmd = f"find {shell_quote(source)} -type f \\( {patterns} \\) -printf '%T@|%p\\n' 2>/dev/null"
+        # Direct stat via find exec (printf is not supported by toybox find on Android)
+        cmd = f"find {shell_quote(source)} -type f \\( {patterns} \\) -exec stat -c '%Y|%n' {{}} + 2>/dev/null"
         result = self.run_adb(["shell", cmd], timeout=120)
-        if result.returncode != 0 or not result.stdout.strip():
-            cmd = f"find {shell_quote(source)} -type f \\( {patterns} \\) -exec stat -c '%Y|%n' {{}} \\; 2>/dev/null"
-            result = self.run_adb(["shell", cmd], timeout=180)
         if result.returncode != 0 or not result.stdout.strip():
             return []
 
