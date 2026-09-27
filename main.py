@@ -855,8 +855,8 @@ class PhotoMatchApp(ctk.CTk):
         self.btn_open_disk.pack(side="right")
 
         # İlerleme Çubuğu ve Yüzde
-        progress_wrap = ctk.CTkFrame(view, fg_color=CARD_BG, corner_radius=10, border_width=1, border_color=CARD_BORDER, padx=20, pady=20)
-        progress_wrap.pack(fill="x", pady=(0, 20))
+        progress_wrap = ctk.CTkFrame(view, fg_color=CARD_BG, corner_radius=10, border_width=1, border_color=CARD_BORDER)
+        progress_wrap.pack(fill="x", padx=4, pady=(0, 20))
 
         prog_hdr = ctk.CTkFrame(progress_wrap, fg_color="transparent")
         prog_hdr.pack(fill="x", pady=(0, 8))
