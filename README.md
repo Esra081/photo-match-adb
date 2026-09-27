@@ -1,30 +1,43 @@
-# 📱 PhotoMatch — ADB Photo Matching Tool
+# 📱 PhotoMatch — Android & Apple iPhone Photo Backup & Match Tool
 
-Android cihazlardaki fotoğrafları ADB (Android Debug Bridge) üzerinden bilgisayara aktarıp eşleştiren Python aracı.
+Android ve Apple iPhone cihazlarındaki fotoğrafları ve videoları bilgisayara aktaran, yerel diskteki fotoğraflarla karşılaştıran ve kopyalananları telefon hafızasından güvenle temizleyen Python masaüstü uygulaması.
+
+---
 
 ## 🚀 Özellikler
 
-- Android cihazla USB/WiFi üzerinden ADB bağlantısı
-- Fotoğraf listeleme, karşılaştırma ve eşleştirme
-- Otomatik aktarım ve organizasyon
+- **Çift Cihaz Desteği (Android & iPhone):**
+  - **Android (ADB):** USB Hata Ayıklama üzerinden yüksek hızlı MediaStore ve find taraması.
+  - **Apple iPhone (iOS):** Windows Taşınabilir Aygıtlar (WPD / Shell) protokolü ile doğrudan DCIM taraması.
+- **Modern Fotoğraf Formatları:** Apple `.heic`, `.heif`, `.mov`, `.dng` ve tüm yaygın medya formatları için önizleme ve aktarım desteği (`pillow-heif`).
+- **Akıllı Karşılaştırma:** Telefonda olup henüz bilgisayara yedeklenmemiş yeni medyaları otomatik ayıklar.
+- **Disk Çift Dosya Temizliği:** Yedekleme klasöründeki mükerrer dosyaları bulur ve temizler.
+- **Telefondan Güvenli Silme:** Yalnızca bilgisayara yedeklendiği kesinleşmiş eski medyaları belirtilen tarihe göre telefondan kaldırır.
+
+---
 
 ## 🛠️ Kurulum
 
-ADB'nin sisteminizde kurulu olması gerekir.
-
 ```bash
-pip install -r requirements.txt  # (gerekirse)
+pip install -r requirements.txt
 python main.py
 ```
 
-## 📋 Gereksinimler
+### Android Gereksinimleri
+- Telefonda **Geliştirici Seçenekleri** ve **USB Hata Ayıklama** açık olmalıdır.
+- `adb_tools/adb.exe` proje klasöründe veya sistem PATH ortam değişkeninde bulunmalıdır.
 
-- Python 3.x
-- Android Debug Bridge (ADB)
-- USB Hata Ayıklama modunda Android cihaz
+### Apple iPhone (iOS) Gereksinimleri
+- iPhone USB kablosuyla bilgisayara bağlanmalı, ekran kilidi açılmalı ve **"Bu Bilgisayara Güven"** onayı verilmelidir.
 
-## 🔧 Teknolojiler
+---
 
-- Python
-- ADB (Android Debug Bridge)
-- SQLite
+## 📦 Masaüstü Uygulaması (.EXE) Olarak Paketleme
+
+Uygulamayı Python gerektirmeden bağımsız bir `.exe` olarak derlemek için:
+
+```bash
+python -m PyInstaller --noconsole --onefile --add-data "adb_tools;adb_tools" --collect-all customtkinter --collect-all pillow_heif --name "PhotoMatch" main.py
+```
+
+Derleme tamamlandığında `dist/` klasörü içinde tek tıkla çalıştırılabilir **`PhotoMatch.exe`** oluşacaktır.

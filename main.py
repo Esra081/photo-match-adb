@@ -1,3 +1,4 @@
+import sys
 import os
 import re
 import shutil
@@ -14,17 +15,37 @@ from tkinter import filedialog, messagebox
 import customtkinter as ctk
 from PIL import Image, ImageTk
 
+try:
+    import pillow_heif
+    pillow_heif.register_heif_opener()
+except Exception:
+    pass
+
+import ios_manager
+
 
 # ============================================================
-#  Phone Photo Backup Pro
+#  PhotoMatch - Android & Apple iPhone Photo Backup
 #  Gerekenler:
-#    pip install customtkinter pillow
+#    pip install customtkinter pillow pywin32 pillow-heif
 #  ADB:
 #    Put adb_tools/adb.exe next to this file or add adb to PATH.
 # ============================================================
 
-BASE_DIR = Path(__file__).resolve().parent
-EMBEDDED_ADB = BASE_DIR / "adb_tools" / "adb.exe"
+if getattr(sys, "frozen", False):
+    EXE_DIR = Path(sys.executable).resolve().parent
+    MEI_DIR = Path(sys._MEIPASS) if hasattr(sys, "_MEIPASS") else EXE_DIR
+    if (EXE_DIR / "adb_tools" / "adb.exe").exists():
+        EMBEDDED_ADB = EXE_DIR / "adb_tools" / "adb.exe"
+    elif (MEI_DIR / "adb_tools" / "adb.exe").exists():
+        EMBEDDED_ADB = MEI_DIR / "adb_tools" / "adb.exe"
+    else:
+        EMBEDDED_ADB = Path("adb")
+    BASE_DIR = MEI_DIR
+else:
+    BASE_DIR = Path(__file__).resolve().parent
+    EMBEDDED_ADB = BASE_DIR / "adb_tools" / "adb.exe"
+
 ADB_PATH = str(EMBEDDED_ADB) if EMBEDDED_ADB.exists() else "adb"
 
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif", ".gif", ".bmp", ".dng")
@@ -96,6 +117,8 @@ class MediaItem:
     size: int | None
     kind: str
     exists_locally: bool = False
+    path_parts: list[str] | None = None
+    cleanup_ts: float | None = None
 
 
 MAX_BACKUP_WORKERS = 4
@@ -138,11 +161,12 @@ class PhoneBackupPro(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        self.title("PhotoMatch | Android -> Disk Backup")
+        self.title("PhotoMatch | Android & iPhone -> Disk Backup")
         self.geometry("1220x760")
         self.minsize(1100, 700)
         self.configure(fg_color=BG)
 
+        self.device_mode_var = ctk.StringVar(value="📱 Android (ADB)")
         self.source_path = ctk.StringVar(value="/sdcard")
         self.target_path = ctk.StringVar(value="")
         self.search_text = ctk.StringVar(value="")
@@ -185,6 +209,20 @@ class PhoneBackupPro(ctk.CTk):
             font=("Segoe UI", 26, "bold"),
             text_color=TEXT,
         ).pack(side="left")
+
+        self.device_segmented = ctk.CTkSegmentedButton(
+            header,
+            values=["📱 Android (ADB)", "🍏 Apple iPhone (iOS)"],
+            variable=self.device_mode_var,
+            command=self.on_device_mode_changed,
+            selected_color=ACCENT,
+            selected_hover_color=ACCENT_2,
+            unselected_color=PANEL_2,
+            unselected_hover_color=PANEL_3,
+            font=FONT_SUB,
+            height=34,
+        )
+        self.device_segmented.pack(side="left", padx=25)
 
         self.status_badge = ctk.CTkLabel(
             header,
@@ -532,7 +570,40 @@ class PhoneBackupPro(ctk.CTk):
         if current_day not in values:
             self.cleanup_day.set(values[-1])
 
+    def is_ios_mode(self) -> bool:
+        return "iphone" in self.device_mode_var.get().lower() or "ios" in self.device_mode_var.get().lower()
+
+    def on_device_mode_changed(self, mode: str):
+        if self.is_ios_mode():
+            devices = ios_manager.list_ios_devices()
+            if devices:
+                self.source_path.set(f"{devices[0]}/DCIM")
+                self.set_status(f"iOS: {devices[0]}", OK)
+            else:
+                self.source_path.set("Apple iPhone / DCIM")
+                self.set_status("iOS: iPhone bekleniyor", ACCENT_2)
+        else:
+            self.source_path.set("/sdcard")
+            self.set_status("Android (ADB)", PANEL_2)
+        self.clear_analysis_ui()
+
     def test_device(self):
+        if self.is_ios_mode():
+            devices = ios_manager.list_ios_devices()
+            if devices:
+                dev_list = "\n".join([f"• {d}" for d in devices])
+                messagebox.showinfo("Cihaz Bağlandı", f"Bağlı Apple iOS cihazı bulundu:\n\n{dev_list}\n\n'Scan & Show Gallery' butonuna basarak fotoğrafları tarayabilirsiniz.")
+            else:
+                messagebox.showwarning(
+                    "iPhone Bulunamadı",
+                    "Bağlı Apple iPhone / iPad tespit edilemedi.\n\n"
+                    "Lütfen şunları kontrol edin:\n"
+                    "1. Telefonunuzu USB kablo ile bilgisayara bağlayın.\n"
+                    "2. Telefonunuzun ekran kilidini açın.\n"
+                    "3. Ekranda 'Bu Bilgisayara Güvenilsin mi?' sorusu çıkarsa 'Güven'i seçip şifrenizi girin."
+                )
+            return
+
         try:
             result = self.run_adb(["devices"], timeout=10)
             lines = [x.strip() for x in result.stdout.splitlines() if x.strip()]
@@ -644,8 +715,61 @@ class PhoneBackupPro(ctk.CTk):
             self.after(0, lambda: (self.summary_label.configure(text="Indexing target disk..."), self.scan_progress.set(0.22)))
             existing = self.cached_local_index(target)
 
-            self.after(0, lambda: (self.summary_label.configure(text="Finding media files on the phone..."), self.scan_progress.set(0.55)))
-            items = self.get_phone_media(source, existing)
+            if self.is_ios_mode():
+                self.after(0, lambda: (self.summary_label.configure(text="Scanning iPhone media (DCIM)..."), self.scan_progress.set(0.45)))
+                devices = ios_manager.list_ios_devices()
+                dev_name = devices[0] if devices else ""
+                raw_items = ios_manager.scan_ios_media(
+                    device_name=dev_name,
+                    progress_callback=lambda c: self.after(0, lambda c=c: self.summary_label.configure(text=f"Scanning iPhone... {c} media files found")),
+                )
+                if not raw_items:
+                    self.after(0, lambda: self.scan_failed(
+                        "No photos or videos found on iPhone.\n\n"
+                        "Please ensure your iPhone screen is UNLOCKED and you have approved 'Trust This Computer'."
+                    ))
+                    return
+
+                items: list[MediaItem] = []
+                for raw in raw_items:
+                    safe_rel = sanitize_rel_path(raw["rel_path"])
+                    name = raw["name"]
+                    lower = name.lower()
+                    safe_rel_lower = safe_rel.lower()
+                    name_lower = name.lower()
+                    size = raw["size"]
+
+                    exists = False
+                    if safe_rel_lower in existing["path_sizes"]:
+                        local_size = existing["path_sizes"][safe_rel_lower]
+                        exists = (local_size == size) if size is not None else (local_size > 0)
+                    elif name_lower in existing.get("name_entries", {}):
+                        for local_rel, local_size in existing["name_entries"][name_lower]:
+                            if local_size <= 0:
+                                continue
+                            if size is not None:
+                                if local_size == size:
+                                    exists = True
+                                    break
+                            elif safe_rel_lower.endswith(local_rel) or local_rel.endswith(name_lower):
+                                exists = True
+                                break
+
+                    kind = "image" if lower.endswith(IMAGE_EXTS) else "video"
+                    items.append(MediaItem(
+                        remote_path=raw["remote_path"],
+                        rel_path=safe_rel,
+                        file_name=name,
+                        folder=raw["folder"],
+                        size=size,
+                        kind=kind,
+                        exists_locally=exists,
+                        path_parts=raw["path_parts"],
+                        cleanup_ts=raw["modify_ts"],
+                    ))
+            else:
+                self.after(0, lambda: (self.summary_label.configure(text="Finding media files on the phone..."), self.scan_progress.set(0.55)))
+                items = self.get_phone_media(source, existing)
 
             if not items:
                 self.after(0, lambda: self.scan_failed("No photos or videos were found under this phone folder. Try /sdcard as the source path."))
@@ -1018,6 +1142,13 @@ class PhoneBackupPro(ctk.CTk):
             self.thumb_cache[item.remote_path] = local
             return local
 
+        if item.remote_path.startswith("ios://"):
+            success, _err = ios_manager.copy_ios_file(item.path_parts or [], local, timeout=30)
+            if success and local.exists() and local.stat().st_size > 0:
+                self.thumb_cache[item.remote_path] = local
+                return local
+            return None
+
         # Pull only the selected preview file into a temporary folder.
         result = self.run_adb(["pull", item.remote_path, str(local)], timeout=40)
         if result.returncode == 0 and local.exists() and local.stat().st_size > 0:
@@ -1091,8 +1222,12 @@ class PhoneBackupPro(ctk.CTk):
                     self.after(0, lambda p=p: self.progress.set(p))
                 return
 
-            result = self.run_adb(["pull", item.remote_path, str(local_path)], timeout=180)
-            success = result.returncode == 0 and local_path.exists() and local_path.stat().st_size > 0
+            if item.remote_path.startswith("ios://"):
+                success, err_msg = ios_manager.copy_ios_file(item.path_parts or [], local_path, timeout=180)
+            else:
+                result = self.run_adb(["pull", item.remote_path, str(local_path)], timeout=180)
+                success = result.returncode == 0 and local_path.exists() and local_path.stat().st_size > 0
+                err_msg = (result.stderr or result.stdout or "Bilinmeyen hata").strip()
 
             with progress_lock:
                 completed_count += 1
@@ -1100,7 +1235,6 @@ class PhoneBackupPro(ctk.CTk):
                     copied += 1
                 else:
                     failed += 1
-                    err_msg = (result.stderr or result.stdout or "Bilinmeyen hata").strip()
                     failed_files.append((item.file_name, item.remote_path, err_msg))
                     self.after(0, lambda n=item.file_name: self.backup_status.configure(text=f"Kopyalanamadı: {n}", text_color=DANGER))
 
@@ -1266,16 +1400,30 @@ class PhoneBackupPro(ctk.CTk):
     def phone_cleanup_scan_worker(self, source: str, target: str, cutoff_ts: float):
         try:
             existing = self.cached_local_index(target)
-            self.after(0, lambda: self.phone_cleanup_status.configure(text="Reading phone media dates from MediaStore...", text_color=TEXT))
-            rows = self.query_phone_cleanup_rows(source)
-            has_dates = any(ts is not None for path, ts in rows if path.lower().endswith(MEDIA_EXTS))
-            if not rows or not has_dates:
-                self.after(0, lambda: self.phone_cleanup_status.configure(text="Reading media dates from Android file system...", text_color=TEXT))
-                fallback_rows = self.query_phone_cleanup_rows_from_find(source)
-                if fallback_rows:
-                    rows = fallback_rows
-            if not rows and self.media_items:
-                rows = [(item.remote_path, None) for item in self.media_items]
+            if self.is_ios_mode():
+                self.after(0, lambda: self.phone_cleanup_status.configure(text="Reading iPhone media dates...", text_color=TEXT))
+                if not self.media_items:
+                    devices = ios_manager.list_ios_devices()
+                    dev_name = devices[0] if devices else ""
+                    raw = ios_manager.scan_ios_media(device_name=dev_name)
+                    rows = [(r["remote_path"], r["modify_ts"]) for r in raw]
+                    ios_item_map = {r["remote_path"]: r for r in raw}
+                else:
+                    rows = [(it.remote_path, it.cleanup_ts) for it in self.media_items]
+                    ios_item_map = {it.remote_path: it for it in self.media_items}
+            else:
+                self.after(0, lambda: self.phone_cleanup_status.configure(text="Reading phone media dates from MediaStore...", text_color=TEXT))
+                rows = self.query_phone_cleanup_rows(source)
+                has_dates = any(ts is not None for path, ts in rows if path.lower().endswith(MEDIA_EXTS))
+                if not rows or not has_dates:
+                    self.after(0, lambda: self.phone_cleanup_status.configure(text="Reading media dates from Android file system...", text_color=TEXT))
+                    fallback_rows = self.query_phone_cleanup_rows_from_find(source)
+                    if fallback_rows:
+                        rows = fallback_rows
+                if not rows and self.media_items:
+                    rows = [(item.remote_path, None) for item in self.media_items]
+                ios_item_map = {}
+
             total = max(len(rows), 1)
             candidates: list[MediaItem] = []
             media_seen = 0
@@ -1325,8 +1473,13 @@ class PhoneBackupPro(ctk.CTk):
 
                 folder = os.path.dirname(safe_rel).replace("\\", "/") or "Root"
                 kind = "image" if lower.endswith(IMAGE_EXTS) else "video"
-                item = MediaItem(remote_path, safe_rel, name, folder, None, kind, True)
-                item.cleanup_ts = modified_ts
+                path_parts = None
+                if remote_path.startswith("ios://"):
+                    mapped = ios_item_map.get(remote_path)
+                    if mapped:
+                        path_parts = getattr(mapped, "path_parts", None) or (mapped.get("path_parts") if isinstance(mapped, dict) else None)
+
+                item = MediaItem(remote_path, safe_rel, name, folder, None, kind, True, path_parts=path_parts, cleanup_ts=modified_ts)
                 candidates.append(item)
 
                 if idx % 50 == 0:
@@ -1523,11 +1676,18 @@ class PhoneBackupPro(ctk.CTk):
         for idx, item in enumerate(candidates, start=1):
             if self.stop_requested:
                 break
-            result = self.run_adb(["shell", f"rm -f {shell_quote(item.remote_path)}"], timeout=30)
-            if result.returncode == 0:
-                deleted += 1
+            if item.remote_path.startswith("ios://"):
+                success, _err = ios_manager.delete_ios_file(item.path_parts or [])
+                if success:
+                    deleted += 1
+                else:
+                    failed.append(item.file_name)
             else:
-                failed.append(item.file_name)
+                result = self.run_adb(["shell", f"rm -f {shell_quote(item.remote_path)}"], timeout=30)
+                if result.returncode == 0:
+                    deleted += 1
+                else:
+                    failed.append(item.file_name)
             self.after(0, lambda p=idx / total: self.phone_cleanup_progress.set(p))
 
         self.after(0, lambda: self.phone_cleanup_delete_finished(deleted, failed))

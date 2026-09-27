@@ -19,3 +19,8 @@ Thumbs.db
 
 # Environment
 .env
+
+# PyInstaller build artifacts
+dist/
+build/
+*.spec
