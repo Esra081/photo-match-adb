@@ -550,27 +550,15 @@ class PhotoMatchApp(ctk.CTk):
             top_cards.grid_columnconfigure(i, weight=1)
 
         # Kart 1: Cihaz Durumu
-        card_dev = ctk.CTkFrame(top_cards, fg_color=CARD_BG, corner_radius=10, border_width=1, border_color=CARD_BORDER, height=96)
+        card_dev = ctk.CTkFrame(top_cards, fg_color=CARD_BG, corner_radius=10, border_width=1, border_color=CARD_BORDER, height=100)
         card_dev.grid(row=0, column=0, sticky="ew", padx=(0, 8))
         card_dev.pack_propagate(False)
-
-        dev_icon_box = ctk.CTkLabel(card_dev, text="📱", font=("Segoe UI", 20), width=42, height=42, fg_color=CARD_BG_2, corner_radius=8)
-        dev_icon_box.pack(side="left", padx=12, pady=10)
-
-        dev_info_box = ctk.CTkFrame(card_dev, fg_color="transparent")
-        dev_info_box.pack(side="left", fill="both", expand=True, pady=8)
-
-        self.card_dev_title = ctk.CTkLabel(dev_info_box, text=t("card_device_connected"), font=FONT_SUB, text_color=TEXT_WHITE)
-        self.card_dev_title.pack(anchor="w")
-
-        self.lbl_dev_name = ctk.CTkLabel(dev_info_box, text=f"○ {t('card_device_none')}", font=FONT_TEXT, text_color=TEXT_MUTED)
-        self.lbl_dev_name.pack(anchor="w")
 
         self.btn_test_dev = ctk.CTkButton(
             card_dev,
             text=f"✔ {t('btn_test_device')}",
             font=FONT_SMALL,
-            width=100,
+            width=90,
             height=28,
             fg_color=CARD_BG_2,
             hover_color=CARD_BORDER,
@@ -580,16 +568,28 @@ class PhotoMatchApp(ctk.CTk):
         )
         self.btn_test_dev.pack(side="right", padx=12)
 
+        dev_icon_box = ctk.CTkLabel(card_dev, text="📱", font=("Segoe UI", 20), width=42, height=42, fg_color=CARD_BG_2, corner_radius=8)
+        dev_icon_box.pack(side="left", padx=12, pady=12)
+
+        dev_info_box = ctk.CTkFrame(card_dev, fg_color="transparent")
+        dev_info_box.pack(side="left", fill="both", expand=True, pady=12)
+
+        self.card_dev_title = ctk.CTkLabel(dev_info_box, text=t("card_device_connected"), font=FONT_SUB, text_color=TEXT_WHITE)
+        self.card_dev_title.pack(anchor="w")
+
+        self.lbl_dev_name = ctk.CTkLabel(dev_info_box, text=f"○ {t('card_device_none')}", font=FONT_TEXT, text_color=TEXT_MUTED)
+        self.lbl_dev_name.pack(anchor="w", pady=(2, 0))
+
         # Kart 2: Telefon Klasörü
-        card_src = ctk.CTkFrame(top_cards, fg_color=CARD_BG, corner_radius=10, border_width=1, border_color=CARD_BORDER, height=96)
+        card_src = ctk.CTkFrame(top_cards, fg_color=CARD_BG, corner_radius=10, border_width=1, border_color=CARD_BORDER, height=100)
         card_src.grid(row=0, column=1, sticky="ew", padx=4)
         card_src.pack_propagate(False)
 
         src_icon_box = ctk.CTkLabel(card_src, text="📁", font=("Segoe UI", 20), width=42, height=42, fg_color=CARD_BG_2, corner_radius=8)
-        src_icon_box.pack(side="left", padx=12, pady=10)
+        src_icon_box.pack(side="left", padx=12, pady=12)
 
         src_info_box = ctk.CTkFrame(card_src, fg_color="transparent")
-        src_info_box.pack(side="left", fill="both", expand=True, padx=(0, 10), pady=8)
+        src_info_box.pack(side="left", fill="both", expand=True, padx=(0, 12), pady=10)
 
         self.lbl_phone_folder = ctk.CTkLabel(src_info_box, text=t("card_phone_folder"), font=FONT_SUB, text_color=TEXT_WHITE)
         self.lbl_phone_folder.pack(anchor="w")
@@ -597,19 +597,28 @@ class PhotoMatchApp(ctk.CTk):
         self.lbl_phone_folder_sub = ctk.CTkLabel(src_info_box, text=t("card_phone_folder_sub"), font=FONT_SMALL, text_color=TEXT_MUTED)
         self.lbl_phone_folder_sub.pack(anchor="w")
 
-        self.entry_source = ctk.CTkEntry(src_info_box, textvariable=self.source_path, height=26, fg_color=BG_DARK, border_width=1, border_color=CARD_BORDER, text_color=TEXT_WHITE, font=FONT_SMALL)
+        self.entry_source = ctk.CTkEntry(
+            src_info_box,
+            textvariable=self.source_path,
+            height=28,
+            fg_color=BG_DARK,
+            border_width=1,
+            border_color=CARD_BORDER,
+            text_color=TEXT_WHITE,
+            font=FONT_SMALL,
+        )
         self.entry_source.pack(fill="x", pady=(4, 0))
 
         # Kart 3: Yedekleme Klasörü
-        card_dst = ctk.CTkFrame(top_cards, fg_color=CARD_BG, corner_radius=10, border_width=1, border_color=CARD_BORDER, height=96)
+        card_dst = ctk.CTkFrame(top_cards, fg_color=CARD_BG, corner_radius=10, border_width=1, border_color=CARD_BORDER, height=100)
         card_dst.grid(row=0, column=2, sticky="ew", padx=(8, 0))
         card_dst.pack_propagate(False)
 
         dst_icon_box = ctk.CTkLabel(card_dst, text="💾", font=("Segoe UI", 20), width=42, height=42, fg_color=CARD_BG_2, corner_radius=8)
-        dst_icon_box.pack(side="left", padx=12, pady=10)
+        dst_icon_box.pack(side="left", padx=12, pady=12)
 
         dst_info_box = ctk.CTkFrame(card_dst, fg_color="transparent")
-        dst_info_box.pack(side="left", fill="both", expand=True, padx=(0, 8), pady=8)
+        dst_info_box.pack(side="left", fill="both", expand=True, padx=(0, 12), pady=10)
 
         self.lbl_target_folder = ctk.CTkLabel(dst_info_box, text=t("card_target_folder"), font=FONT_SUB, text_color=TEXT_WHITE)
         self.lbl_target_folder.pack(anchor="w")
@@ -617,14 +626,14 @@ class PhotoMatchApp(ctk.CTk):
         self.lbl_target_folder_sub = ctk.CTkLabel(dst_info_box, text=t("card_target_folder_sub"), font=FONT_SMALL, text_color=TEXT_MUTED)
         self.lbl_target_folder_sub.pack(anchor="w")
 
-        self.entry_target = ctk.CTkEntry(dst_info_box, textvariable=self.target_path, height=26, fg_color=BG_DARK, border_width=1, border_color=CARD_BORDER, text_color=TEXT_WHITE, font=FONT_SMALL)
-        self.entry_target.pack(fill="x", pady=(4, 0))
+        dst_row = ctk.CTkFrame(dst_info_box, fg_color="transparent")
+        dst_row.pack(fill="x", pady=(4, 0))
 
         self.btn_browse_disk = ctk.CTkButton(
-            card_dst,
+            dst_row,
             text=t("btn_browse"),
             font=FONT_SMALL,
-            width=68,
+            width=60,
             height=28,
             fg_color=CARD_BG_2,
             hover_color=CARD_BORDER,
@@ -632,7 +641,19 @@ class PhotoMatchApp(ctk.CTk):
             border_color=CARD_BORDER,
             command=self.select_target_disk,
         )
-        self.btn_browse_disk.pack(side="right", padx=10)
+        self.btn_browse_disk.pack(side="right")
+
+        self.entry_target = ctk.CTkEntry(
+            dst_row,
+            textvariable=self.target_path,
+            height=28,
+            fg_color=BG_DARK,
+            border_width=1,
+            border_color=CARD_BORDER,
+            text_color=TEXT_WHITE,
+            font=FONT_SMALL,
+        )
+        self.entry_target.pack(side="left", fill="x", expand=True, padx=(0, 6))
 
         # Ana Gövde (3 Sütun: Klasörler | Galeri | Özet)
         body = ctk.CTkFrame(view, fg_color="transparent")
@@ -717,7 +738,7 @@ class PhotoMatchApp(ctk.CTk):
         col_summary.grid_propagate(False)
 
         summary_hdr = ctk.CTkFrame(col_summary, fg_color="transparent")
-        summary_hdr.pack(fill="x", padx=14, pady=(12, 10))
+        summary_hdr.pack(fill="x", padx=12, pady=(12, 10))
         self.lbl_summary_hdr = ctk.CTkLabel(summary_hdr, text=t("summary_title"), font=FONT_TITLE, text_color=TEXT_WHITE)
         self.lbl_summary_hdr.pack(anchor="w")
 
@@ -739,6 +760,8 @@ class PhotoMatchApp(ctk.CTk):
             command=self.trigger_scan,
         )
         self.btn_scan_main.pack(fill="x", padx=12, pady=(16, 0))
+
+        self.scan_progress_bar = ctk.CTkProgressBar(col_summary, height=6, fg_color=BG_DARK, progress_color=ACCENT_PINK, mode="indeterminate")
 
         # Alt İşlem Çubuğu (Footer)
         bottom_bar = ctk.CTkFrame(view, fg_color="transparent", height=44)
@@ -834,13 +857,6 @@ class PhotoMatchApp(ctk.CTk):
         # Hedef
         dst_box = ctk.CTkFrame(flow_card, fg_color="transparent")
         dst_box.grid(row=0, column=2, sticky="ew", padx=20, pady=16)
-        ctk.CTkLabel(dst_box, text="💾", font=("Segoe UI", 24), width=48, height=48, fg_color=CARD_BG_2, corner_radius=10).pack(side="left", padx=(0, 14))
-        dst_t = ctk.CTkFrame(dst_box, fg_color="transparent")
-        dst_t.pack(side="left", fill="both", expand=True)
-        self.dst_card_lbl = ctk.CTkLabel(dst_t, text=t("backup_target"), font=FONT_SMALL, text_color=TEXT_MUTED)
-        self.dst_card_lbl.pack(anchor="w")
-        self.dst_name_lbl = ctk.CTkLabel(dst_t, text="Seçilen Disk Klasörü", font=FONT_SUB, text_color=TEXT_WHITE)
-        self.dst_name_lbl.pack(anchor="w")
 
         self.btn_open_disk = ctk.CTkButton(
             dst_box,
@@ -852,35 +868,52 @@ class PhotoMatchApp(ctk.CTk):
             hover_color=CARD_BORDER,
             command=self.open_target_disk,
         )
-        self.btn_open_disk.pack(side="right")
+        self.btn_open_disk.pack(side="right", padx=(10, 0))
 
-        # İlerleme Çubuğu ve Yüzde
+        ctk.CTkLabel(dst_box, text="💾", font=("Segoe UI", 24), width=48, height=48, fg_color=CARD_BG_2, corner_radius=10).pack(side="left", padx=(0, 14))
+        dst_t = ctk.CTkFrame(dst_box, fg_color="transparent")
+        dst_t.pack(side="left", fill="both", expand=True)
+        self.dst_card_lbl = ctk.CTkLabel(dst_t, text=t("backup_target"), font=FONT_SMALL, text_color=TEXT_MUTED)
+        self.dst_card_lbl.pack(anchor="w")
+        self.dst_name_lbl = ctk.CTkLabel(dst_t, text="Seçilen Disk Klasörü", font=FONT_SUB, text_color=TEXT_WHITE)
+        self.dst_name_lbl.pack(anchor="w")
+
+        # İlerleme Çubuğu ve Yüzde Kartı
         progress_wrap = ctk.CTkFrame(view, fg_color=CARD_BG, corner_radius=10, border_width=1, border_color=CARD_BORDER)
-        progress_wrap.pack(fill="x", padx=4, pady=(0, 20))
+        progress_wrap.pack(fill="x", pady=(0, 16))
 
-        prog_hdr = ctk.CTkFrame(progress_wrap, fg_color="transparent")
-        prog_hdr.pack(fill="x", pady=(0, 8))
+        prog_inner = ctk.CTkFrame(progress_wrap, fg_color="transparent")
+        prog_inner.pack(fill="x", padx=20, pady=18)
+
+        prog_hdr = ctk.CTkFrame(prog_inner, fg_color="transparent")
+        prog_hdr.pack(fill="x", pady=(0, 10))
 
         self.backup_status_text = ctk.CTkLabel(prog_hdr, text=t("backup_completed"), font=FONT_SUB, text_color=TEXT_WHITE)
         self.backup_status_text.pack(side="left")
 
-        self.backup_pct_label = ctk.CTkLabel(prog_hdr, text="%0", font=FONT_TITLE, text_color=ACCENT_PINK)
+        self.backup_pct_label = ctk.CTkLabel(prog_hdr, text="%0", font=FONT_HEAD, text_color=ACCENT_PINK)
         self.backup_pct_label.pack(side="right")
 
-        self.backup_progress_bar = ctk.CTkProgressBar(progress_wrap, height=14, fg_color=BG_DARK, progress_color=ACCENT_PINK)
+        self.backup_progress_bar = ctk.CTkProgressBar(prog_inner, height=16, fg_color=BG_DARK, progress_color=ACCENT_PINK, corner_radius=8)
         self.backup_progress_bar.set(0)
         self.backup_progress_bar.pack(fill="x", pady=(0, 10))
 
-        self.lbl_time_remaining = ctk.CTkLabel(progress_wrap, text="", font=FONT_SMALL, text_color=TEXT_MUTED)
-        self.lbl_time_remaining.pack(anchor="w")
+        prog_footer = ctk.CTkFrame(prog_inner, fg_color="transparent")
+        prog_footer.pack(fill="x")
+
+        self.lbl_time_remaining = ctk.CTkLabel(prog_footer, text="", font=FONT_TEXT, text_color=TEXT_MUTED)
+        self.lbl_time_remaining.pack(side="left")
+
+        self.lbl_speed_detail = ctk.CTkLabel(prog_footer, text="", font=FONT_TEXT, text_color=TEXT_WHITE)
+        self.lbl_speed_detail.pack(side="right")
 
         # Anlık Kopyalanan Dosya Kartı
-        self.current_copy_card = ctk.CTkFrame(view, fg_color=CARD_BG, corner_radius=10, border_width=1, border_color=CARD_BORDER, height=90)
-        self.current_copy_card.pack(fill="x", pady=(0, 24))
+        self.current_copy_card = ctk.CTkFrame(view, fg_color=CARD_BG, corner_radius=10, border_width=1, border_color=CARD_BORDER, height=95)
+        self.current_copy_card.pack(fill="x", pady=(0, 20))
         self.current_copy_card.pack_propagate(False)
 
-        self.cur_file_thumb = ctk.CTkLabel(self.current_copy_card, text="📷", font=("Segoe UI", 24), width=64, height=64, fg_color=BG_DARK, corner_radius=8)
-        self.cur_file_thumb.pack(side="left", padx=14, pady=12)
+        self.cur_file_thumb = ctk.CTkLabel(self.current_copy_card, text="📷", font=("Segoe UI", 24), width=60, height=60, fg_color=BG_DARK, corner_radius=8)
+        self.cur_file_thumb.pack(side="left", padx=16, pady=16)
 
         cur_info = ctk.CTkFrame(self.current_copy_card, fg_color="transparent")
         cur_info.pack(side="left", fill="both", expand=True, pady=14)
@@ -896,7 +929,7 @@ class PhotoMatchApp(ctk.CTk):
 
         # Butonlar (Duraklat, Durdur)
         action_bar = ctk.CTkFrame(view, fg_color="transparent")
-        action_bar.pack(fill="x")
+        action_bar.pack(fill="x", pady=(6, 0))
 
         self.btn_pause = ctk.CTkButton(
             action_bar,
@@ -916,7 +949,7 @@ class PhotoMatchApp(ctk.CTk):
             action_bar,
             text=f"⛔ {t('btn_stop')}",
             font=FONT_SUB,
-            width=200,
+            width=180,
             height=40,
             fg_color=CARD_BG,
             hover_color=DANGER_RED,
@@ -1045,19 +1078,19 @@ class PhotoMatchApp(ctk.CTk):
         d_top = ctk.CTkFrame(date_card, fg_color="transparent")
         d_top.pack(fill="x", padx=16, pady=14)
 
+        # Tarih Seçiciler (Yıl, Ay, Gün)
+        picker_box = ctk.CTkFrame(d_top, fg_color="transparent")
+        picker_box.pack(side="right")
+
         cal_icon = ctk.CTkLabel(d_top, text="📅", font=("Segoe UI", 24), width=48, height=48, fg_color=CARD_BG_2, corner_radius=10)
         cal_icon.pack(side="left", padx=(0, 14))
 
         d_txt = ctk.CTkFrame(d_top, fg_color="transparent")
-        d_txt.pack(side="left", fill="both")
+        d_txt.pack(side="left", fill="both", expand=True)
         self.clean_date_lbl = ctk.CTkLabel(d_txt, text=t("clean_date_title"), font=FONT_SUB, text_color=TEXT_WHITE)
         self.clean_date_lbl.pack(anchor="w")
         self.clean_date_sub = ctk.CTkLabel(d_txt, text=t("clean_date_sub"), font=FONT_SMALL, text_color=TEXT_MUTED)
         self.clean_date_sub.pack(anchor="w")
-
-        # Tarih Seçiciler (Yıl, Ay, Gün)
-        picker_box = ctk.CTkFrame(d_top, fg_color="transparent")
-        picker_box.pack(side="right")
 
         years = [str(y) for y in range(datetime.now().year, 2011, -1)]
         months = [f"{m:02d}" for m in range(1, 13)]
@@ -1275,6 +1308,8 @@ class PhotoMatchApp(ctk.CTk):
         self.is_busy = True
         self.btn_scan_main.configure(state="disabled", text=t("scanning"))
         self.lbl_gallery_sub.configure(text=t("scanning"))
+        self.scan_progress_bar.pack(fill="x", padx=12, pady=(10, 0))
+        self.scan_progress_bar.start()
         threading.Thread(target=self.scan_worker, args=(source, target), daemon=True).start()
 
     def scan_worker(self, source: str, target: str):
@@ -1344,12 +1379,16 @@ class PhotoMatchApp(ctk.CTk):
 
     def scan_finished_error(self, message: str):
         self.is_busy = False
+        self.scan_progress_bar.stop()
+        self.scan_progress_bar.pack_forget()
         self.btn_scan_main.configure(state="normal", text=t("btn_scan"))
         self.lbl_gallery_sub.configure(text=message)
         messagebox.showerror("Tarama Hatası", message)
 
     def scan_success(self, items: list[MediaItem], plan: dict[str, list[MediaItem]]):
         self.is_busy = False
+        self.scan_progress_bar.stop()
+        self.scan_progress_bar.pack_forget()
         self.media_items = items
         self.filtered_items = list(items)
         self.sync_plan = plan
@@ -1462,7 +1501,7 @@ class PhotoMatchApp(ctk.CTk):
     def create_thumb_card(self, item: MediaItem, row: int, col: int):
         card = ctk.CTkFrame(self.gallery_scroll, fg_color=CARD_BG, corner_radius=8, width=130, height=160)
         card.grid(row=row, column=col, padx=6, pady=6, sticky="n")
-        card.grid_propagate(False)
+        card.pack_propagate(False)
 
         # Önizleme Görseli
         thumb_lbl = ctk.CTkLabel(card, text="VIDEO" if item.kind == "video" else "PHOTO", font=FONT_SMALL, text_color=TEXT_MUTED, width=118, height=110, fg_color=BG_DARK, corner_radius=6)
@@ -1583,12 +1622,18 @@ class PhotoMatchApp(ctk.CTk):
 
     def backup_worker_task(self, items: list[MediaItem], target: str):
         target_path = Path(target)
-        total = len(items)
+        total_items = len(items)
         copied = 0
         failed = 0
         failed_files = []
 
+        total_bytes = sum(it.size or 0 for it in items)
+        if total_bytes == 0:
+            total_bytes = max(1, total_items * 3 * 1024 * 1024)
+
+        completed_bytes = 0
         start_time = time.time()
+        smoothed_speed = None
 
         for idx, item in enumerate(items, start=1):
             if self.stop_requested:
@@ -1601,54 +1646,169 @@ class PhotoMatchApp(ctk.CTk):
 
             local_file = to_windows_safe_path(target_path / item.rel_path)
             local_file.parent.mkdir(parents=True, exist_ok=True)
+            file_expected_size = item.size or 0
 
-            # Arayüzü anlık güncelle
-            self.after(0, lambda n=item.file_name, s=format_size(item.size): (
+            # Arayüzü anlık güncelle (Dosya adı ve boyutu)
+            self.after(0, lambda n=item.file_name, s=format_size(file_expected_size): (
                 self.cur_file_name.configure(text=n),
                 self.cur_file_size.configure(text=s)
             ))
 
+            success = False
+            err = ""
+
             if item.remote_path.startswith("ios://"):
-                success, err = ios_manager.copy_ios_file(item.path_parts or [], local_file, timeout=180)
+                ios_result = [False, ""]
+
+                def ios_runner():
+                    res, e = ios_manager.copy_ios_file(item.path_parts or [], local_file, timeout=180)
+                    ios_result[0] = res
+                    ios_result[1] = e
+
+                t = threading.Thread(target=ios_runner, daemon=True)
+                t.start()
+
+                while t.is_alive():
+                    if self.stop_requested:
+                        break
+                    cur_written = local_file.stat().st_size if local_file.exists() else 0
+                    current_total_done = completed_bytes + min(cur_written, file_expected_size or cur_written)
+                    pct = min(0.99, current_total_done / max(1, total_bytes))
+
+                    now = time.time()
+                    elapsed = now - start_time
+                    if elapsed > 0.4 and current_total_done > 0:
+                        inst_speed = current_total_done / elapsed
+                        smoothed_speed = inst_speed if smoothed_speed is None else (0.85 * smoothed_speed + 0.15 * inst_speed)
+
+                    rem_str = "..."
+                    spd_str = ""
+                    if smoothed_speed and smoothed_speed > 1024:
+                        rem_bytes = max(0, total_bytes - current_total_done)
+                        rem_sec = int(rem_bytes / smoothed_speed)
+                        if rem_sec < 60:
+                            rem_str = f"~{rem_sec} sn"
+                        elif rem_sec < 3600:
+                            rem_str = f"~{rem_sec // 60} dk {rem_sec % 60} sn"
+                        else:
+                            rem_str = f"~{rem_sec // 3600} sa {(rem_sec % 3600) // 60} dk"
+                        spd_str = f"{smoothed_speed / (1024 * 1024):.1f} MB/s"
+
+                    pct_int = int(pct * 100)
+                    self.after(0, lambda p=pct, pi=pct_int, c=copied, t_cnt=total_items, rem=rem_str, spd=spd_str, d_bytes=current_total_done, t_bytes=total_bytes: (
+                        self.backup_progress_bar.set(p),
+                        self.backup_pct_label.configure(text=f"%{pi}"),
+                        self.backup_status_text.configure(text=t("backup_progress_text", copied=c, total=t_cnt)),
+                        self.lbl_time_remaining.configure(text=t("time_remaining", time=rem)),
+                        self.lbl_speed_detail.configure(text=f"{spd}  ({format_size(d_bytes)} / {format_size(t_bytes)})" if spd else "")
+                    ))
+                    time.sleep(0.1)
+
+                t.join(timeout=5)
+                success = ios_result[0]
+                err = ios_result[1]
             else:
-                res = self.run_adb(["pull", item.remote_path, str(local_file)], timeout=180)
-                success = (res.returncode == 0 and local_file.exists() and local_file.stat().st_size > 0)
-                err = res.stderr or "Hata"
+                cmd = [ADB_PATH, "pull", item.remote_path, str(local_file)]
+                try:
+                    proc = subprocess.Popen(
+                        cmd,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        creationflags=creation_flags(),
+                    )
+
+                    while proc.poll() is None:
+                        if self.stop_requested:
+                            proc.terminate()
+                            break
+
+                        cur_written = local_file.stat().st_size if local_file.exists() else 0
+                        current_total_done = completed_bytes + min(cur_written, file_expected_size or cur_written)
+                        pct = min(0.99, current_total_done / max(1, total_bytes))
+
+                        now = time.time()
+                        elapsed = now - start_time
+                        if elapsed > 0.4 and current_total_done > 0:
+                            inst_speed = current_total_done / elapsed
+                            smoothed_speed = inst_speed if smoothed_speed is None else (0.85 * smoothed_speed + 0.15 * inst_speed)
+
+                        rem_str = "..."
+                        spd_str = ""
+                        if smoothed_speed and smoothed_speed > 1024:
+                            rem_bytes = max(0, total_bytes - current_total_done)
+                            rem_sec = int(rem_bytes / smoothed_speed)
+                            if rem_sec < 60:
+                                rem_str = f"~{rem_sec} sn"
+                            elif rem_sec < 3600:
+                                rem_str = f"~{rem_sec // 60} dk {rem_sec % 60} sn"
+                            else:
+                                rem_str = f"~{rem_sec // 3600} sa {(rem_sec % 3600) // 60} dk"
+                            spd_str = f"{smoothed_speed / (1024 * 1024):.1f} MB/s"
+
+                        pct_int = int(pct * 100)
+                        self.after(0, lambda p=pct, pi=pct_int, c=copied, t_cnt=total_items, rem=rem_str, spd=spd_str, d_bytes=current_total_done, t_bytes=total_bytes: (
+                            self.backup_progress_bar.set(p),
+                            self.backup_pct_label.configure(text=f"%{pi}"),
+                            self.backup_status_text.configure(text=t("backup_progress_text", copied=c, total=t_cnt)),
+                            self.lbl_time_remaining.configure(text=t("time_remaining", time=rem)),
+                            self.lbl_speed_detail.configure(text=f"{spd}  ({format_size(d_bytes)} / {format_size(t_bytes)})" if spd else "")
+                        ))
+                        time.sleep(0.08)
+
+                    stdout, stderr = proc.communicate(timeout=10)
+                    success = (proc.returncode == 0 and local_file.exists() and local_file.stat().st_size > 0)
+                    err = stderr or "Hata"
+                except Exception as ex:
+                    success = False
+                    err = str(ex)
 
             if success:
                 copied += 1
                 item.exists_locally = True
+                actual_sz = local_file.stat().st_size if local_file.exists() else file_expected_size
+                completed_bytes += actual_sz
             else:
                 failed += 1
                 failed_files.append((item.file_name, err))
 
-            pct = copied / total
-            elapsed = time.time() - start_time
-            if copied > 0:
-                speed = copied / elapsed
-                rem_seconds = int((total - copied) / speed)
-                rem_str = f"~{rem_seconds // 60} dk {rem_seconds % 60} sn"
-            else:
-                rem_str = "..."
-
-            self.after(0, lambda p=pct, c=copied, t_cnt=total, rem=rem_str: (
+            current_total_done = completed_bytes
+            pct = min(1.0, current_total_done / max(1, total_bytes))
+            pct_int = int(pct * 100)
+            self.after(0, lambda p=pct, pi=pct_int, c=copied, t_cnt=total_items: (
                 self.backup_progress_bar.set(p),
-                self.backup_pct_label.configure(text=f"%{int(p * 100)}"),
+                self.backup_pct_label.configure(text=f"%{pi}"),
                 self.backup_status_text.configure(text=t("backup_progress_text", copied=c, total=t_cnt)),
-                self.lbl_time_remaining.configure(text=t("time_remaining", time=rem)),
             ))
 
         self.is_busy = False
-        self.after(0, lambda: self.backup_completed_ui(copied, failed, failed_files))
+        self.after(0, lambda: self.backup_completed_ui(copied, failed, failed_files, target, completed_bytes))
 
-    def backup_completed_ui(self, copied: int, failed: int, failed_files: list):
+    def backup_completed_ui(self, copied: int, failed: int, failed_files: list, target: str = "", completed_bytes: int = 0):
         self.btn_stop.configure(state="normal")
-        self.backup_progress_bar.set(1)
+        self.backup_progress_bar.set(1.0)
         self.backup_pct_label.configure(text="%100")
         self.backup_status_text.configure(text=t("backup_completed"))
         self.lbl_time_remaining.configure(text=f"Başarılı: {copied}  |  Hatalı: {failed}")
+        self.lbl_speed_detail.configure(text=format_size(completed_bytes))
 
-        messagebox.showinfo("Yedekleme", f"Yedekleme işlemi tamamlandı!\n\nKopyalanan: {copied}\nBaşarısız: {failed}")
+        if failed_files and target:
+            log_path = Path(target) / "backup_errors.log"
+            try:
+                with open(log_path, "w", encoding="utf-8") as f:
+                    f.write(f"PhotoMatch Yedekleme Hata Raporu - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                    f.write(f"Toplam Başarısız: {len(failed_files)}\n{'='*60}\n\n")
+                    for fn, err in failed_files:
+                        f.write(f"Dosya: {fn}\nHata:  {err}\n{'-'*40}\n")
+            except Exception:
+                pass
+
+        msg = f"Yedekleme işlemi tamamlandı!\n\nKopyalanan: {copied} dosya ({format_size(completed_bytes)})\nBaşarısız: {failed}"
+        if failed > 0:
+            msg += "\n\nHata detayları yedek klasöründeki 'backup_errors.log' dosyasına yazıldı."
+        messagebox.showinfo("Yedekleme Tamamlandı", msg)
 
     # ============================================================
     #  ADIM 3: Tekrar Eden Dosyalar (Duplicate Cleaner)
