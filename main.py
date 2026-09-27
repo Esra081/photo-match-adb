@@ -1876,9 +1876,16 @@ class PhotoMatchApp(ctk.CTk):
         self.disk_index_target = norm
         return idx
 
+    def normalize_android_path(self, path: str) -> str:
+        p = path.strip().replace("\\", "/")
+        p = re.sub(r"^/storage/emulated/0", "/sdcard", p)
+        p = re.sub(r"^/storage/self/primary", "/sdcard", p)
+        p = re.sub(r"^/mnt/sdcard", "/sdcard", p)
+        return p
+
     def get_phone_media_android(self, source: str, existing: dict[str, any]) -> list[MediaItem]:
-        # MediaStore sorgusu
-        cmd = ["shell", "content", "query", "--uri", "content://media/external/file", "--projection", "_data:_size"]
+        # MediaStore sorgusu: _data, _size, date_modified
+        cmd = ["shell", "content", "query", "--uri", "content://media/external/file", "--projection", "_data:_size:date_modified"]
         res = self.run_adb(cmd, timeout=45)
         raw_rows = []
 
@@ -1886,7 +1893,7 @@ class PhotoMatchApp(ctk.CTk):
             for line in res.stdout.splitlines():
                 if "_data=" not in line:
                     continue
-                m = re.search(r"_data=(.+?)(?:,\s*_size=|$)", line)
+                m = re.search(r"_data=(.+?)(?:,\s*_size=|, date_modified=|$)", line)
                 if m:
                     p = m.group(1).strip()
                     sz = None
@@ -1896,7 +1903,16 @@ class PhotoMatchApp(ctk.CTk):
                             sz = int(sm.group(1))
                         except Exception:
                             pass
-                    raw_rows.append((p, sz))
+
+                    dm = None
+                    tm = re.search(r"date_modified=(\d+)", line)
+                    if tm:
+                        try:
+                            dm = float(tm.group(1))
+                        except Exception:
+                            pass
+
+                    raw_rows.append((p, sz, dm))
 
         # Fallback find
         if not raw_rows:
@@ -1906,19 +1922,36 @@ class PhotoMatchApp(ctk.CTk):
             if res_f.returncode == 0 and res_f.stdout.strip():
                 for line in res_f.stdout.splitlines():
                     if line.strip():
-                        raw_rows.append((line.strip(), None))
+                        raw_rows.append((line.strip(), None, None))
 
         items: list[MediaItem] = []
         seen = set()
 
-        for remote_p, sz in raw_rows:
+        search_filter = self.normalize_android_path(source).rstrip("/") if source and source != "/" else ""
+
+        for remote_p, sz, dm in raw_rows:
             lower = remote_p.lower()
             if lower in seen or not lower.endswith(MEDIA_EXTS):
                 continue
             seen.add(lower)
 
-            rel = re.sub(r"^/storage/emulated/0", "", remote_p)
-            rel = re.sub(r"^/sdcard", "", rel).lstrip("/")
+            norm_p = self.normalize_android_path(remote_p)
+
+            # Kaynak klasör filtresi (varsayılan: /sdcard)
+            if search_filter and not norm_p.startswith(search_filter):
+                continue
+
+            # Gizli ve önbellek klasörlerini atla (.thumbnails, .temp, .sticker vb.)
+            parts = norm_p.split("/")
+            if any(p.startswith(".") for p in parts[:-1]):
+                continue
+
+            if search_filter and norm_p.startswith(search_filter):
+                rel = norm_p[len(search_filter):].lstrip("/")
+            else:
+                rel = re.sub(r"^/storage/[^/]+/", "", remote_p)
+                rel = re.sub(r"^/sdcard/", "", rel).lstrip("/")
+
             safe_rel = sanitize_rel_path(rel)
             name = remote_p.split("/")[-1]
             folder = os.path.dirname(safe_rel).replace("\\", "/") or "Root"
@@ -1928,20 +1961,21 @@ class PhotoMatchApp(ctk.CTk):
             name_lower = name.lower()
 
             exists = False
+            # 1. Birebir göreceli yol eşleşmesi
             if safe_rel_lower in existing["path_sizes"]:
-                loc_sz = existing["path_sizes"][safe_rel_lower]
-                exists = (loc_sz == sz) if sz is not None else (loc_sz > 0)
-            elif name_lower in existing.get("name_entries", {}):
-                for local_rel, local_size in existing["name_entries"][name_lower]:
-                    if local_size <= 0:
-                        continue
-                    if sz is not None:
-                        if local_size == sz:
+                exists = True
+            # 2. Dosya adı eşleşmesi (farklı klasör veya disk kökünde olsa bile)
+            elif name_lower in existing["names"]:
+                if sz is not None:
+                    for local_rel, local_size in existing.get("name_entries", {}).get(name_lower, []):
+                        if local_size == sz or abs(local_size - sz) < 2048:
                             exists = True
                             break
-                    elif safe_rel_lower.endswith(local_rel) or local_rel.endswith(name_lower):
+                    # Kamera veya ekran görüntüsü ise zaman damgası benzersizdir
+                    if not exists and re.match(r"^(img|vid|screenshot|pano|wp|mmexport)?[_-]?20\d{6}", name_lower):
                         exists = True
-                        break
+                else:
+                    exists = True
 
             items.append(MediaItem(
                 remote_path=remote_p,
@@ -1951,6 +1985,7 @@ class PhotoMatchApp(ctk.CTk):
                 size=sz,
                 kind=kind,
                 exists_locally=exists,
+                cleanup_ts=dm,
             ))
 
         return items
